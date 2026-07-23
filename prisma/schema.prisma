@@ -8,6 +8,10 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Supabase: DATABASE_URL apunta al pooler (6543, ?pgbouncer=true) y
+  // DIRECT_URL a la conexión directa (5432) para migraciones/db push.
+  // En local ambas pueden ser la misma URL (docker-compose).
+  directUrl = env("DIRECT_URL")
 }
 
 // Genérico: hoy iPhone, mañana iPad/MacBook/AirPods (§1.4)

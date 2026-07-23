@@ -10,12 +10,17 @@ Next.js 14 (App Router) · React 18 · TypeScript estricto · Tailwind (tokens �
 
 ```bash
 npm install
-cp .env.example .env          # ajusta DATABASE_URL y NEXTAUTH_SECRET
+cp .env.example .env          # ajusta DATABASE_URL/DIRECT_URL y NEXTAUTH_SECRET
 docker compose up -d          # PostgreSQL local
 npx prisma db push            # crea el esquema
 npm run db:seed               # seeds de desarrollo (21 iPhones, fundas, ~70 elementos)
 npm run dev
 ```
+
+> **Base de datos elegida: Supabase** (aún sin conectar). El esquema ya está
+> preparado: `DATABASE_URL` = Transaction pooler (6543, `?pgbouncer=true`) y
+> `DIRECT_URL` = conexión directa (5432) para migraciones — plantilla en
+> `.env.example`. Mientras tanto, el docker-compose local funciona igual.
 
 Usuarios del seed: `admin@cutecases.dev` / `demo@cutecases.dev` (contraseña `cutecases123`).
 
