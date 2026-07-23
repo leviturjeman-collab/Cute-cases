@@ -1,0 +1,284 @@
+{
+  "common": {
+    "brand": "Cute Cases",
+    "claim": "Tu funda, tu rollo ✨",
+    "nav": {
+      "misDisenos": "Mis diseños",
+      "cesta": "Cesta",
+      "cuenta": "Mi cuenta",
+      "login": "Entrar",
+      "galeria": "Galería",
+      "disenos": "Diseños",
+      "volver": "Volver"
+    },
+    "acciones": {
+      "guardar": "Guardar 💾",
+      "compartir": "Compartir",
+      "anadirCesta": "Añadir a la cesta",
+      "continuar": "Continuar",
+      "cambiar": "Cambiar",
+      "cancelar": "Cancelar",
+      "eliminar": "Eliminar",
+      "duplicar": "Duplicar",
+      "renombrar": "Renombrar",
+      "reintentar": "Reintentar",
+      "cerrar": "Cerrar",
+      "aceptar": "Aceptar",
+      "deshacer": "Deshacer",
+      "rehacer": "Rehacer",
+      "centrar": "Centrar",
+      "sustituir": "Sustituir",
+      "verEn3d": "Ver en 3D",
+      "copiarEnlace": "Copiar enlace"
+    },
+    "precio": {
+      "desde": "desde {precio}",
+      "total": "Total: {precio}",
+      "agotada": "Agotada"
+    },
+    "estados": {
+      "cargando": "Cargando…",
+      "vacio": "Nada por aquí todavía",
+      "error": "Ups, algo ha fallado 🙈 Inténtalo otra vez",
+      "reintentar": "Reintentar"
+    },
+    "badges": {
+      "tresD": "3D",
+      "sticker": "sticker",
+      "nuevo": "Nuevo",
+      "temporada": "Temporada"
+    }
+  },
+  "toasts": {
+    "E01": "¡Guardado! Tu funda es preciosa 💖",
+    "E02": "¡A la cesta! 🛒✨",
+    "E03": "Enlace copiado, ¡a compartir! 🎁",
+    "E04": "Tu diseño ya brilla en la galería ✨",
+    "E05": "¡Ahí no cabe! 🥺 Prueba en otro sitio",
+    "E06": "¡Tu funda está llenita! 💖 Quita algo para añadir más",
+    "E07": "Hemos colocado las letras que cabían ✨ Mueve cosas para hacer hueco",
+    "E08": "Solo letras y números, ¡pero seguro que queda genial! ✨",
+    "E09": "Algunos elementos de tu diseño ya no están disponibles 🥺",
+    "E10": "Cambia o quita los elementos no disponibles para continuar 💖",
+    "E11": "Vuelve a la vista trasera para seguir decorando 🎀",
+    "E12": "Crea tu cuenta para guardar tu diseño 💖 No perderás nada",
+    "E13": "¿Seguimos donde lo dejaste? 💖",
+    "E14": "Tu navegador no puede con tanto brilli-brilli 🥺 Actualízalo para diseñar tu funda",
+    "E15": "Ups, algo ha fallado 🙈 Inténtalo otra vez",
+    "E16": "Si cambias de iPhone tu diseño se reiniciará, ¿seguimos?",
+    "E17": "¿Eliminar '{nombre}'? Esto no se puede deshacer 🥺",
+    "E18": "¡Muy pronto! 🛍️ Estamos preparando la tienda"
+  },
+  "home": {
+    "titulo": "Cute Cases — Diseña tu funda de iPhone",
+    "descripcion": "Personaliza tu funda de iPhone con charms 3D y stickers. Diséñala en 3D y pídela o pídela de regalo 🎁",
+    "ctaPrincipal": "✨ Diseña tu funda",
+    "carruselTitulo": "Diseños que nos flipan",
+    "galeriaTitulo": "Las más creadas de la semana",
+    "verGaleria": "Ver toda la galería",
+    "comoFunciona": "Cómo funciona",
+    "paso1Titulo": "Elige tu iPhone",
+    "paso1Texto": "Del 13 al 17, todos los modelos",
+    "paso2Titulo": "Elige tu funda",
+    "paso2Texto": "Silicona, transparente o rígida",
+    "paso3Titulo": "Decórala a tu gusto",
+    "paso3Texto": "Charms 3D, stickers y tus iniciales",
+    "temporadaCta": "Descubre la colección {nombre}",
+    "tuModelo": "Tu {modelo} 💖"
+  },
+  "modelo": {
+    "titulo": "¿Qué iPhone tienes? 📱",
+    "buscar": "Busca tu modelo…",
+    "recordado": "Tu {modelo} 💖",
+    "generacion": "iPhone {gen}",
+    "sinResultados": "No encontramos ese modelo 🥺 Prueba con otro nombre"
+  },
+  "fundas": {
+    "titulo": "Elige tu funda",
+    "filtroMaterial": "Material",
+    "filtroColor": "Color",
+    "materiales": {
+      "silicona": "Silicona",
+      "transparente": "Transparente",
+      "rigida": "Rígida"
+    },
+    "vacio": "No hay fundas para este modelo todavía 🥺",
+    "personalizar": "Personalizar esta funda 🎀",
+    "colores": "Colores",
+    "compatibilidad": "Compatible con",
+    "cuidados": "Materiales y cuidados"
+  },
+  "disenos": {
+    "titulo": "Diseños que nos flipan",
+    "filtroModelo": "Tu modelo",
+    "precioCerrado": "Precio cerrado",
+    "vacio": "Pronto habrá diseños preciosos por aquí ✨",
+    "eligeModelo": "Elige tu modelo de iPhone",
+    "noEditable": "Los diseños de Cute Cases son ediciones especiales: puedes girarlos, pedirlos y compartirlos."
+  },
+  "editor": {
+    "nombrePorDefecto": "Mi funda",
+    "renombrar": "Nombre de tu diseño",
+    "vistas": {
+      "trasera": "Trasera",
+      "lateralIzq": "Lateral izquierdo",
+      "lateralDer": "Lateral derecho",
+      "esquinaSup": "Esquina superior",
+      "esquinaInf": "Esquina inferior"
+    },
+    "categorias": {
+      "letras": "Letras",
+      "corazones": "Corazones",
+      "lazos": "Lazos",
+      "flores": "Flores",
+      "frutas": "Frutas",
+      "animales": "Animales",
+      "estrellas": "Estrellas",
+      "cadenas": "Cadenas",
+      "temporada": "Temporada"
+    },
+    "letras": {
+      "placeholder": "Escribe tu nombre o iniciales",
+      "crear": "Crear letras ✨",
+      "maximo": "Máximo 10 caracteres"
+    },
+    "menu": {
+      "duplicar": "Duplicar diseño",
+      "eliminar": "Eliminar diseño",
+      "cuadricula": "Cuadrícula de 5 mm",
+      "ayuda": "Ayuda"
+    },
+    "desglose": "Desglose del precio",
+    "caducados": {
+      "titulo": "Algunos elementos de tu diseño ya no están disponibles 🥺",
+      "texto": "Puedes sustituirlos o quitarlos para seguir.",
+      "noDisponible": "No disponible"
+    },
+    "accesibilidad": {
+      "visor": "Funda {material} con {n} elementos",
+      "mover": "Mover elemento",
+      "rotar": "Rotación en grados",
+      "eliminarElemento": "Eliminar elemento",
+      "arriba": "Arriba",
+      "abajo": "Abajo",
+      "izquierda": "Izquierda",
+      "derecha": "Derecha"
+    },
+    "guardandoComoInvitado": "Crea tu cuenta para guardar tu diseño 💖 No perderás nada",
+    "recuperarBorrador": "¿Seguimos donde lo dejaste? 💖",
+    "recuperarSi": "Sí, seguimos",
+    "recuperarNo": "Empezar de cero",
+    "sinWebgl": "Tu navegador no puede con tanto brilli-brilli 🥺 Actualízalo para diseñar tu funda",
+    "cambioModelo": "Si cambias de iPhone tu diseño se reiniciará, ¿seguimos?"
+  },
+  "auth": {
+    "loginTitulo": "¡Hola otra vez! 💖",
+    "registroTitulo": "Crea tu cuenta ✨",
+    "email": "Tu email",
+    "password": "Contraseña",
+    "passwordMin": "Mínimo 8 caracteres",
+    "nombre": "Tu nombre (opcional)",
+    "entrar": "Entrar",
+    "registrarse": "Crear cuenta",
+    "conGoogle": "Continuar con Google",
+    "conApple": "Continuar con Apple",
+    "yaTienesCuenta": "¿Ya tienes cuenta? Entra",
+    "noTienesCuenta": "¿Aún no tienes cuenta? Créala",
+    "olvidada": "¿Has olvidado tu contraseña?",
+    "guardarPendiente": "Crea tu cuenta para guardar tu diseño 💖 No perderás nada",
+    "errorCredenciales": "Ese email o contraseña no son correctos 🥺",
+    "fortaleza": {
+      "debil": "Flojita 🥺",
+      "media": "¡Va mejorando! ✨",
+      "fuerte": "¡Súper segura! 💪"
+    }
+  },
+  "misDisenos": {
+    "titulo": "Mis diseños",
+    "vacioTitulo": "Aún no has creado nada… ¡vamos a ello! ✨",
+    "vacioCta": "Diseña tu primera funda",
+    "abrirEditor": "Abrir en el editor",
+    "publicarGaleria": "Publicar en la galería",
+    "necesitaCambio": "Necesita un cambio 🥺",
+    "copiaDe": "Copia de {nombre}",
+    "fundaN": "Mi funda #{n}",
+    "editado": "Editado {fecha}"
+  },
+  "galeria": {
+    "titulo": "Galería Cute",
+    "masQueridas": "Las más queridas de la semana",
+    "recientes": "Recientes",
+    "anonimo": "anónimo",
+    "reportar": "Reportar",
+    "reportado": "Gracias por avisar 💖 Lo revisaremos",
+    "vacio": "Sé la primera persona en publicar tu diseño ✨",
+    "likeNecesitaCuenta": "Crea tu cuenta para dar likes 💖"
+  },
+  "regalo": {
+    "titulo": "{nombre} quiere esta funda de regalo 💖",
+    "tituloSinNombre": "¡Quieren esta funda de regalo! 💖",
+    "cta": "Regalárselo 🎁",
+    "noDisponible": "Este diseño ya no está disponible 🥺",
+    "compartirImagen": "Imagen para stories",
+    "compartirEnlace": "Enlace para que te lo regalen 🎁",
+    "tuNombre": "Tu nombre (opcional)",
+    "desglose": "Qué lleva"
+  },
+  "cesta": {
+    "titulo": "Tu cesta",
+    "vacioTitulo": "Tu cesta está vacía 🥺",
+    "vacioCta": "Diseña tu funda",
+    "unidades": "Unidades",
+    "noDisponible": "No disponible: cambia o quita elementos",
+    "resolver": "Resolver",
+    "total": "Total",
+    "tramitar": "Tramitar pedido",
+    "checkoutPlaceholder": "¡Muy pronto! 🛍️ Estamos preparando la tienda",
+    "checkoutNota": "El pago llegará en la fase 2. Tu cesta se guarda para entonces 💖"
+  },
+  "cuenta": {
+    "titulo": "Mi cuenta",
+    "miIphone": "Mi iPhone",
+    "metodoLogin": "Método de acceso",
+    "cerrarSesion": "Cerrar sesión",
+    "eliminarCuenta": "Eliminar mi cuenta",
+    "eliminarAviso": "Se borrarán tus diseños y likes. Esto no se puede deshacer 🥺",
+    "eliminarConfirma": "Sí, eliminar todo",
+    "verificaEmail": "Confirma tu email cuando puedas 💌 (te hemos escrito)"
+  },
+  "legal": {
+    "privacidad": "Política de privacidad",
+    "terminos": "Términos y condiciones",
+    "cookies": "Política de cookies",
+    "resumenHumano": "Versión para humanos 💖",
+    "contacto": "Contacto"
+  },
+  "cookies": {
+    "texto": "Usamos cookies para mejorar Cute Cases. La analítica solo se activa si nos dejas 💖",
+    "aceptar": "Vale ✨",
+    "rechazar": "No, gracias"
+  },
+  "admin": {
+    "titulo": "Panel de Cute Cases",
+    "secciones": {
+      "dispositivos": "Dispositivos",
+      "fundas": "Fundas",
+      "elementos": "Elementos",
+      "letras": "Letras",
+      "temporadas": "Temporadas",
+      "preestablecidos": "Preestablecidos",
+      "galeria": "Galería",
+      "usuarios": "Usuarios",
+      "ajustes": "Ajustes"
+    },
+    "soloAdmin": "Esta zona es solo para el equipo de Cute Cases"
+  },
+  "errores": {
+    "S01": "Algún elemento de tu diseño ya no está disponible 🥺",
+    "S02": "Hay elementos que se solapan, revisa tu diseño 🥺",
+    "S03": "Ups, algo ha fallado 🙈 Inténtalo otra vez",
+    "S04": "Este diseño no es tuyo 🥺",
+    "noEncontrado": "No encontramos lo que buscas 🥺",
+    "paginaNoExiste": "Esta página no existe… ¡pero tu próxima funda sí! ✨"
+  }
+}

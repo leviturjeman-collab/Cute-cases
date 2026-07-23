@@ -1,0 +1,15 @@
+# Entorno de desarrollo local: PostgreSQL para Prisma
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cutecases
+      POSTGRES_PASSWORD: cutecases
+      POSTGRES_DB: cutecases
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

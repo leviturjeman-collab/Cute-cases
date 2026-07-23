@@ -1,0 +1,132 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   Design tokens de Cute Cases (§2.2–§2.5)
+   ============================================================ */
+:root {
+  /* Color */
+  --pink-50: #fff5fa;
+  --pink-100: #ffe4f1;
+  --pink-200: #ffc9e3;
+  --pink-300: #ffa1cf;
+  --pink-500: #ff69b4;
+  /* Auditoría taste-skill + §15: #F5259C daba 3,75:1 con texto blanco (falla AA
+     en botones). Ajustado dentro del rol "Acción" (§2.2 permite ajustar valores
+     manteniendo rol y contraste): #DB0F8F → 4,69:1 con blanco. */
+  --pink-600: #db0f8f;
+  --pink-700: #c71585;
+  --surface: #ffffff;
+  --text: #3d2233;
+  --text-soft: #7a5a6c;
+  --error: #ff3b5c;
+  --error-bg: #ffe3e8;
+  --success: #2fbf71;
+  --focus: #c71585;
+
+  /* Sombras blandas, nunca negras duras */
+  --shadow-sm: 0 2px 8px rgba(199, 21, 133, 0.08);
+  --shadow-md: 0 6px 20px rgba(199, 21, 133, 0.12);
+  --shadow-lg: 0 12px 32px rgba(199, 21, 133, 0.16);
+
+  /* Animación */
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+/* Titulares sin viudas (auditoría taste-skill) */
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+body {
+  background: var(--pink-100);
+  color: var(--text);
+  font-family: var(--font-nunito), ui-rounded, system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  min-height: 100dvh;
+}
+
+h1,
+h2,
+.font-display {
+  font-family: var(--font-fredoka), 'Baloo 2', Quicksand, ui-rounded, sans-serif;
+}
+
+h1 {
+  font-size: 1.75rem;
+  font-weight: 600;
+}
+
+h2 {
+  font-size: 1.375rem;
+  font-weight: 600;
+}
+
+h3 {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+/* Anillo de foco visible en toda la app (§15) */
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* Targets táctiles cómodos */
+button,
+a,
+[role='button'] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* prefers-reduced-motion: sin confeti ni rebotes (§2.5, §15) */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.1s !important;
+    transition-timing-function: linear !important;
+  }
+}
+
+/* Scrollbar suave rosa en desktop */
+@media (min-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--pink-100);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--pink-300);
+    border-radius: 9999px;
+  }
+}
+
+/* Patrón rayado para la zona de cámara (§6.3) */
+.camera-zone-pattern {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 161, 207, 0.4),
+    rgba(255, 161, 207, 0.4) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}

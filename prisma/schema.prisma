@@ -1,0 +1,206 @@
+// Cute Cases — modelo de datos (§12.2 de la especificación)
+// Unidades: SIEMPRE milímetros (Float) y céntimos (Int). Nada de píxeles ni euros en float.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Genérico: hoy iPhone, mañana iPad/MacBook/AirPods (§1.4)
+model DeviceModel {
+  id             String  @id @default(cuid())
+  tipo           String  @default("iphone")
+  nombre         String // "iPhone 15 Pro"
+  generacion     String // "15"
+  anchoMm        Float
+  altoMm         Float
+  radioEsquinaMm Float
+  cameraZone     Json // [{x,y}...] polígono en mm, origen esquina sup. izq. de la funda
+  asset3dUrl     String
+  activo         Boolean @default(false)
+  orden          Int     @default(0)
+
+  cases   CaseCompatibility[]
+  designs Design[]
+  users   User[]
+}
+
+model CaseBase {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  nombre      String
+  descripcion String
+  material    String // "silicona" | "transparente" | "rigida" | ampliable desde admin
+  fotos       Json // string[]
+  asset3dUrl  String
+  activo      Boolean @default(false)
+  destacada   Boolean @default(false)
+
+  variantes CaseVariant[]
+  compat    CaseCompatibility[]
+}
+
+model CaseCompatibility {
+  caseId   String
+  deviceId String
+  caseBase CaseBase    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  device   DeviceModel @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@id([caseId, deviceId])
+}
+
+model CaseVariant {
+  id             String  @id @default(cuid())
+  caseBaseId     String
+  colorNombre    String
+  colorHex       String
+  foto           String?
+  precioCentimos Int
+  disponible     Boolean @default(true)
+
+  caseBase CaseBase @relation(fields: [caseBaseId], references: [id], onDelete: Cascade)
+  designs  Design[]
+}
+
+model Element {
+  id             String  @id @default(cuid())
+  nombre         String
+  tipo           String // "charm3d" | "plano"
+  categoria      String // "letras"|"corazones"|"lazos"|"flores"|"frutas"|"animales"|"estrellas"|"cadenas"
+  precioCentimos Int
+  anchoMm        Float
+  altoMm         Float
+  profundidadMm  Float? // solo charms 3D
+  assetUrl       String // GLB o PNG
+  hitbox         Json // [{x,y}...] polígono en mm, origen = centro del elemento
+  activo         Boolean @default(false)
+  esNuevo        Boolean @default(false)
+  orden          Int     @default(0)
+  seasonId       String? // null = permanente
+  letraChar      String? // solo elementos-letra: "A".."Z","Ñ","0".."9"
+
+  season SeasonCollection? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+
+  @@index([categoria, activo])
+}
+
+model SeasonCollection {
+  id          String   @id @default(cuid())
+  nombre      String
+  emoji       String
+  fechaInicio DateTime
+  fechaFin    DateTime
+  activo      Boolean  @default(true)
+
+  elementos Element[]
+}
+
+model Design {
+  id               String  @id @default(cuid())
+  userId           String? // null solo en tránsito; los borradores anónimos viven en localStorage
+  nombre           String  @default("Mi funda")
+  deviceId         String
+  caseVariantId    String
+  elementos        Json // [{elementId, xMm, yMm, rotacionGrados, letraChar?}]
+  precioTotalCache Int // céntimos; SIEMPRE recalculado en server (§12.5)
+  thumbnailUrl     String?
+  shareToken       String  @unique // >=128 bits CSPRNG (§8.2)
+  shareNombre      String? // nombre mostrado en la página regalo (opcional)
+  publicadoGaleria Boolean @default(false)
+  autorVisible     Boolean @default(true)
+  likesCount       Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device      DeviceModel @relation(fields: [deviceId], references: [id])
+  caseVariant CaseVariant @relation(fields: [caseVariantId], references: [id])
+  likes       Like[]
+  reports     Report[]
+
+  @@index([userId])
+  @@index([publicadoGaleria])
+}
+
+model PresetDesign {
+  id             String  @id @default(cuid())
+  slug           String  @unique
+  nombre         String
+  precioCentimos Int // precio CERRADO (§4.6)
+  designData     Json // { deviceIds, caseBaseId, caseVariantId, elementos: [...] }
+  fotos          Json
+  publicado      Boolean @default(false)
+  orden          Int     @default(0)
+}
+
+model User {
+  id           String  @id @default(cuid())
+  email        String  @unique
+  nombre       String?
+  passwordHash String? // solo provider "credentials" (argon2id)
+  provider     String // "credentials" | "google" | "apple"
+  rol          String  @default("user") // "user" | "admin"
+  deviceId     String? // "mi iPhone" recordado
+  emailVerificado Boolean @default(false)
+  activo       Boolean @default(true) // desactivable desde admin (§11)
+
+  createdAt DateTime @default(now())
+
+  device  DeviceModel? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  designs Design[]
+  likes   Like[]
+}
+
+model Like {
+  userId    String
+  designId  String
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  design Design @relation(fields: [designId], references: [id], onDelete: Cascade)
+
+  @@id([userId, designId])
+  @@index([designId])
+}
+
+model Report {
+  id        String   @id @default(cuid())
+  designId  String
+  motivo    String?
+  estado    String   @default("pendiente") // "pendiente" | "revisado" | "oculto"
+  createdAt DateTime @default(now())
+
+  design Design @relation(fields: [designId], references: [id], onDelete: Cascade)
+}
+
+model CartItem {
+  id       String  @id @default(cuid())
+  ownerKey String // userId o sessionId de invitado
+  designId String?
+  presetId String?
+  cantidad Int     @default(1)
+
+  createdAt DateTime @default(now())
+
+  @@index([ownerKey])
+}
+
+model AdminAudit {
+  id        String   @id @default(cuid())
+  adminId   String
+  accion    String // "crear" | "actualizar" | "eliminar" | ...
+  entidad   String // "DeviceModel" | "CaseBase" | ...
+  entidadId String
+  ts        DateTime @default(now())
+}
+
+// Ajustes globales editables desde admin (§11): margen de colisión, textos hero, etc.
+model AppSetting {
+  key   String @id
+  value Json
+}
