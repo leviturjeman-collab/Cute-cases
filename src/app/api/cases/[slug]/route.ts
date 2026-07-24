@@ -4,7 +4,7 @@ import { apiError, handleApiError } from '@/server/errors';
 
 export const dynamic = 'force-dynamic';
 
-/** GET /api/cases/[slug] — ficha de funda (§12.3). */
+/** GET /api/cases/[slug] (SS13.1): ficha completa; 404 si inactiva. */
 export async function GET(_req: Request, { params }: { params: { slug: string } }) {
   try {
     const caseBase = await prisma.caseBase.findUnique({
@@ -19,11 +19,21 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
       descripcion: caseBase.descripcion,
       material: caseBase.material,
       fotos: caseBase.fotos,
-      asset3dUrl: caseBase.asset3dUrl,
       variantes: caseBase.variantes,
       compatibles: caseBase.compat
         .filter((c) => c.device.activo)
-        .map((c) => ({ id: c.device.id, nombre: c.device.nombre })),
+        .map((c) => ({
+          id: c.device.id,
+          slug: c.device.slug,
+          nombre: c.device.nombre,
+          generacion: c.device.generacion,
+          anchoMm: c.device.anchoMm,
+          altoMm: c.device.altoMm,
+          radioEsquinaMm: c.device.radioEsquinaMm,
+          grosorMm: c.device.grosorMm,
+          cameraZone: c.device.cameraZone,
+          moduloForma: c.device.moduloForma,
+        })),
     });
   } catch (e) {
     return handleApiError(e);

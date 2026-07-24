@@ -90,7 +90,7 @@ export default function AdminPreestablecidosPage() {
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold">Preestablecidos</h1>
+        <h1 className="text-xl font-semibold">Preestablecidos</h1>
         <AdminButton
           onClick={() =>
             setForm({
@@ -115,7 +115,7 @@ export default function AdminPreestablecidosPage() {
 
       {form && (
         <form
-          className="mb-6 grid gap-3 rounded-thumb border border-pink-200 bg-white p-4"
+          className="mb-6 grid gap-3 rounded-thumb border border-border bg-surface p-4"
           onSubmit={(ev) => {
             ev.preventDefault();
             create.mutate();
@@ -140,7 +140,7 @@ export default function AdminPreestablecidosPage() {
               onChange={(ev) => setForm({ ...form, designDataJson: ev.target.value })}
             />
           </Field>
-          {error && <p className="text-sm font-bold text-error">{error}</p>}
+          {error && <p className="text-sm font-semibold text-error">{error}</p>}
           <div className="flex gap-2">
             <AdminButton type="submit" disabled={create.isPending}>Crear (valida colisiones)</AdminButton>
             <AdminButton variant="secondary" onClick={() => setForm(null)}>Cancelar</AdminButton>
@@ -150,7 +150,7 @@ export default function AdminPreestablecidosPage() {
 
       <AdminTable headers={['Orden', 'Nombre', 'Precio', 'Publicado', '']}>
         {data?.presets.map((p, idx) => (
-          <tr key={p.id} className="border-b border-pink-50">
+          <tr key={p.id} className="border-b border-border">
             <td className="px-3 py-2">
               <span className="flex items-center gap-1">
                 {p.orden}
@@ -158,7 +158,7 @@ export default function AdminPreestablecidosPage() {
                 <button type="button" aria-label="Bajar" className="px-1" onClick={() => move(idx, 1)}>↓</button>
               </span>
             </td>
-            <td className="px-3 py-2 font-bold">
+            <td className="px-3 py-2 font-semibold">
               {p.nombre} <span className="text-xs text-text-soft">/{p.slug}</span>
             </td>
             <td className="px-3 py-2">{formatCentimos(p.precioCentimos)}</td>

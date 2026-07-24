@@ -1,55 +1,71 @@
 import { z } from 'zod';
 
-/** Validación Zod en todos los límites (§12.1). */
+/** Validacion Zod en todos los limites (SS13, SS14.1 paso 1). */
 
-export const elementInstanceSchema = z.object({
+export const placedItemSchema = z.object({
   instanceId: z.string().min(1).max(64),
   elementId: z.string().min(1).max(64),
   xMm: z.number().finite(),
   yMm: z.number().finite(),
-  rotacionGrados: z.number().finite().min(0).max(360),
-  letraChar: z.string().regex(/^[A-ZÑ0-9]$/).optional(),
+  rotationDeg: z
+    .number()
+    .finite()
+    .transform((v) => {
+      // Rotaciones normalizadas a [0, 360) (SS14.1)
+      let r = v % 360;
+      if (r < 0) r += 360;
+      return r;
+    }),
+  letterChar: z
+    .string()
+    .regex(/^[A-ZÑ0-9]$/)
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
 export const designPayloadSchema = z.object({
-  nombre: z.string().trim().min(1).max(60).optional(),
+  nombre: z.string().trim().min(1).max(40).optional(),
   deviceId: z.string().min(1),
   caseVariantId: z.string().min(1),
-  elementos: z.array(elementInstanceSchema).max(200),
-  // Nota §12.5: cualquier precio enviado por el cliente se IGNORA.
+  elementos: z.array(placedItemSchema).max(200),
+  /** Para el control de concurrencia T-19 (SS7.10). */
+  updatedAt: z.string().datetime().optional(),
 });
 
 export const registerSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
   password: z.string().min(8).max(200),
-  nombre: z.string().trim().max(60).optional(),
+  nombre: z.string().trim().max(40).optional(),
 });
 
 export const galleryToggleSchema = z.object({
-  publicadoGaleria: z.boolean().optional(),
+  publicado: z.boolean().optional(),
   autorVisible: z.boolean().optional(),
 });
 
 export const shareNameSchema = z.object({
-  shareNombre: z.string().trim().max(40).nullable().optional(),
+  shareNombre: z.string().trim().max(30).nullable().optional(),
 });
 
 export const renameSchema = z.object({
-  nombre: z.string().trim().min(1).max(60),
+  nombre: z.string().trim().min(1).max(40).optional(),
+  shareNombre: z.string().trim().max(30).nullable().optional(),
 });
 
 export const reportSchema = z.object({
-  motivo: z.string().trim().max(500).optional(),
+  motivo: z.string().trim().max(200).optional(),
 });
 
 export const lettersExpandSchema = z.object({
-  texto: z.string().max(50),
+  texto: z.string().max(60),
+  juego: z.enum(['letras-oro', 'letras-sticker']).default('letras-oro'),
 });
 
 export const cartAddSchema = z
   .object({
     designId: z.string().optional(),
     presetId: z.string().optional(),
+    deviceId: z.string().optional(),
     cantidad: z.number().int().min(1).max(99).default(1),
   })
   .refine((d) => Boolean(d.designId) !== Boolean(d.presetId), {
@@ -60,7 +76,12 @@ export const cartUpdateSchema = z.object({
   cantidad: z.number().int().min(1).max(99),
 });
 
-export const thumbnailSchema = z.object({
-  /** WebP en base64 (sin prefijo data:). Máx ~1 MB decodificado. */
-  imageBase64: z.string().max(1_500_000),
+export const thumbnailConfirmSchema = z.object({
+  publicUrl: z.string().url().max(500),
+});
+
+export const meUpdateSchema = z.object({
+  nombre: z.string().trim().max(40).nullable().optional(),
+  deviceId: z.string().nullable().optional(),
+  autorVisible: z.boolean().optional(),
 });

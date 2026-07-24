@@ -1,130 +1,62 @@
-'use client';
+import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
+import { prisma } from '@/server/db';
+import { getSessionUser } from '@/server/auth';
+import { PageShell } from '@/components/layout/PageShell';
+import type { GalleryItem } from '@/components/GalleryCard';
+import { GaleriaClient } from './GaleriaClient';
 
-import Link from 'next/link';
-import { useState } from 'react';
-import { useTranslations } from 'next-intl';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
-import { Heart, Flag } from 'lucide-react';
-import { Header } from '@/components/layout/Header';
-import { Footer } from '@/components/layout/Footer';
-import { Card, EmptyState, SkeletonGrid, Tabs, useToast } from '@/components/ui';
-import { api } from '@/lib/api-client';
+// SS5.1: SSR paginada e indexable — primera pagina en servidor.
+export const dynamic = 'force-dynamic';
 
-interface GalleryCard {
-  id: string;
-  nombre: string;
-  thumbnailUrl: string | null;
-  likesCount: number;
-  autor: string | null;
-  shareToken: string;
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('galeria');
+  return { title: t('titulo') };
 }
 
-/** Galería social (§9): opt-in, likes con sesión, orden semanal/reciente. */
-export default function GaleriaPage() {
-  const t = useTranslations();
-  const router = useRouter();
-  const { status } = useSession();
-  const { showToast } = useToast();
-  const queryClient = useQueryClient();
-  const [sort, setSort] = useState<'semana' | 'recientes'>('semana');
-  const [liked, setLiked] = useState<Set<string>>(new Set());
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['gallery', sort],
-    queryFn: () => api<{ disenos: GalleryCard[] }>(`/api/gallery?sort=${sort}`),
+export default async function GaleriaPage() {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const likeGroups = await prisma.like.groupBy({
+    by: ['designId'],
+    where: { createdAt: { gte: since }, design: { publicadoGaleria: true } },
+    _count: { designId: true },
+    orderBy: { _count: { designId: 'desc' } },
+    take: 100,
   });
-
-  const likeMutation = useMutation({
-    mutationFn: async ({ id, unlike }: { id: string; unlike: boolean }) =>
-      api<{ likesCount: number; liked: boolean }>(`/api/gallery/${id}/like`, {
-        method: unlike ? 'DELETE' : 'POST',
-      }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['gallery'] }),
+  const rank = new Map(likeGroups.map((l, i) => [l.designId, i]));
+  const designs = await prisma.design.findMany({
+    where: { publicadoGaleria: true },
+    include: { user: { select: { nombre: true } } },
+    orderBy: [{ likesCount: 'desc' }, { updatedAt: 'desc' }],
+    take: 24,
   });
+  designs.sort((a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999));
 
-  const toggleLike = (id: string) => {
-    if (status !== 'authenticated') {
-      showToast(t('galeria.likeNecesitaCuenta'));
-      router.push('/login?next=/galeria');
-      return;
-    }
-    const unlike = liked.has(id);
-    setLiked((prev) => {
-      const next = new Set(prev);
-      if (unlike) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    likeMutation.mutate({ id, unlike });
-  };
+  const user = await getSessionUser();
+  const likedSet = user
+    ? new Set(
+        (
+          await prisma.like.findMany({
+            where: { userId: user.id, designId: { in: designs.map((d) => d.id) } },
+            select: { designId: true },
+          })
+        ).map((l) => l.designId),
+      )
+    : new Set<string>();
 
-  const report = async (id: string) => {
-    try {
-      await api(`/api/gallery/${id}/report`, { method: 'POST', body: JSON.stringify({}) });
-      showToast(t('galeria.reportado'), 'success');
-    } catch {
-      showToast(t('toasts.E15'), 'error');
-    }
-  };
+  const initial: GalleryItem[] = designs.map((d) => ({
+    id: d.id,
+    nombre: d.nombre,
+    thumbnailUrl: d.thumbnailUrl,
+    likesCount: d.likesCount,
+    autor: d.autorVisible ? (d.user?.nombre?.split(' ')[0] ?? null) : null,
+    shareToken: d.shareToken,
+    likedByMe: likedSet.has(d.id),
+  }));
 
   return (
-    <>
-      <Header />
-      <main className="mx-auto max-w-4xl px-4 pt-6">
-        <h1 className="mb-4">{t('galeria.titulo')}</h1>
-        <Tabs
-          label={t('galeria.titulo')}
-          tabs={[
-            { id: 'semana', label: t('galeria.masQueridas') },
-            { id: 'recientes', label: t('galeria.recientes') },
-          ]}
-          active={sort}
-          onChange={(id) => setSort(id as 'semana' | 'recientes')}
-        />
-        <div className="mt-4">
-          {isLoading && <SkeletonGrid />}
-          {data && data.disenos.length === 0 && <EmptyState emoji="✨" title={t('galeria.vacio')} />}
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-            {data?.disenos.map((d) => (
-              <Card key={d.id}>
-                <Link href={`/d/${d.shareToken}`}>
-                  <div className="mb-2 flex aspect-square items-center justify-center overflow-hidden rounded-thumb bg-pink-100">
-                    {d.thumbnailUrl ? (
-                      <img src={d.thumbnailUrl} alt={d.nombre} className="h-full w-full object-cover" />
-                    ) : (
-                      <span className="text-5xl">💖</span>
-                    )}
-                  </div>
-                  <p className="truncate font-bold">{d.nombre}</p>
-                  <p className="truncate text-xs text-text-soft">{d.autor ?? t('galeria.anonimo')}</p>
-                </Link>
-                <div className="mt-2 flex items-center justify-between">
-                  <button
-                    type="button"
-                    aria-pressed={liked.has(d.id)}
-                    onClick={() => toggleLike(d.id)}
-                    className="flex min-h-[44px] items-center gap-1 rounded-pill px-2 text-sm font-bold text-pink-600"
-                  >
-                    <Heart size={18} className={liked.has(d.id) ? 'fill-pink-600' : ''} />
-                    {d.likesCount}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t('galeria.reportar')}
-                    onClick={() => void report(d.id)}
-                    className="flex h-11 w-11 items-center justify-center rounded-pill text-text-soft hover:text-error"
-                  >
-                    <Flag size={16} />
-                  </button>
-                </div>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </main>
-      <Footer />
-    </>
+    <PageShell>
+      <GaleriaClient initialSemana={initial} />
+    </PageShell>
   );
 }

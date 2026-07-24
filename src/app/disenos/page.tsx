@@ -1,55 +1,46 @@
-'use client';
+import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
+import { prisma } from '@/server/db';
+import { compatibleDeviceIdsForPreset } from '@/server/presetService';
+import { PageShell } from '@/components/layout/PageShell';
+import { DisenosClient, type PresetCardData } from './DisenosClient';
 
-import Link from 'next/link';
-import { useTranslations } from 'next-intl';
-import { useQuery } from '@tanstack/react-query';
-import { Header } from '@/components/layout/Header';
-import { Footer } from '@/components/layout/Footer';
-import { Card, EmptyState, SkeletonGrid } from '@/components/ui';
-import { api } from '@/lib/api-client';
-import { formatCentimos } from '@/lib/pricing';
+export const revalidate = 300;
 
-interface Preset {
-  id: string;
-  slug: string;
-  nombre: string;
-  precioCentimos: number;
-  fotos: string[];
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('disenos');
+  return { title: t('titulo') };
 }
 
-/** Diseños preestablecidos (§4.6): NO editables, precio cerrado. */
-export default function DisenosPage() {
-  const t = useTranslations();
-  const { data, isLoading } = useQuery({
-    queryKey: ['presets'],
-    queryFn: () => api<{ presets: Preset[] }>('/api/presets'),
+/** Catalogo de preestablecidos (SS6.5): grid con filtro por generacion. */
+export default async function DisenosPage() {
+  const presets = await prisma.presetDesign.findMany({
+    where: { publicado: true },
+    orderBy: { orden: 'asc' },
+    select: { id: true, slug: true, nombre: true, precioCentimos: true, fotos: true },
   });
 
+  const cards: PresetCardData[] = await Promise.all(
+    presets.map(async (p) => {
+      const deviceIds = await compatibleDeviceIdsForPreset(p.id);
+      const devices = await prisma.deviceModel.findMany({
+        where: { id: { in: deviceIds }, activo: true },
+        select: { generacion: true },
+      });
+      return {
+        slug: p.slug,
+        nombre: p.nombre,
+        precioCentimos: p.precioCentimos,
+        foto: (p.fotos as string[])[0] ?? null,
+        generaciones: [...new Set(devices.map((d) => d.generacion))],
+        compatibles: devices.length,
+      };
+    }),
+  );
+
   return (
-    <>
-      <Header />
-      <main className="mx-auto max-w-4xl px-4 pt-6">
-        <h1 className="mb-2">{t('disenos.titulo')}</h1>
-        <p className="mb-6 text-sm text-text-soft">{t('disenos.noEditable')}</p>
-        {isLoading && <SkeletonGrid />}
-        {data && data.presets.length === 0 && <EmptyState emoji="✨" title={t('disenos.vacio')} />}
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-          {data?.presets.map((p) => (
-            <Link key={p.id} href={`/disenos/${p.slug}`}>
-              <Card interactive>
-                <div className="mb-2 flex aspect-square items-center justify-center rounded-thumb bg-pink-100 text-5xl">
-                  🎀
-                </div>
-                <p className="truncate font-bold">{p.nombre}</p>
-                <p className="font-display font-semibold text-pink-600">
-                  {formatCentimos(p.precioCentimos)}
-                </p>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      </main>
-      <Footer />
-    </>
+    <PageShell>
+      <DisenosClient presets={cards} />
+    </PageShell>
   );
 }

@@ -22,10 +22,10 @@ export default function AdminAuditoriaPage() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-bold">Auditoría</h1>
+      <h1 className="mb-4 text-xl font-semibold">Auditoría</h1>
       <AdminTable headers={['Cuándo', 'Admin', 'Acción', 'Entidad', 'ID']}>
         {data?.entries.map((e) => (
-          <tr key={e.id} className="border-b border-pink-50">
+          <tr key={e.id} className="border-b border-border">
             <td className="px-3 py-1.5">{new Date(e.ts).toLocaleString('es-ES')}</td>
             <td className="px-3 py-1.5">{e.adminId}</td>
             <td className="px-3 py-1.5">{e.accion}</td>

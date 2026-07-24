@@ -8,7 +8,7 @@ import { AdminButton, Field, inputCls } from '@/components/admin/adminUi';
 interface Settings {
   collisionMarginMm?: number;
   heroClaim?: string;
-  gridDefaultOn?: boolean;
+  gridDefault?: boolean;
 }
 
 /** Admin · Ajustes (§11): margen de colisión, textos del hero, cuadrícula. */
@@ -35,9 +35,9 @@ export default function AdminAjustesPage() {
 
   return (
     <div className="max-w-lg">
-      <h1 className="mb-4 text-xl font-bold">Ajustes</h1>
+      <h1 className="mb-4 text-xl font-semibold">Ajustes</h1>
       <form
-        className="flex flex-col gap-4 rounded-thumb border border-pink-200 bg-white p-4"
+        className="flex flex-col gap-4 rounded-thumb border border-border bg-surface p-4"
         onSubmit={(e) => {
           e.preventDefault();
           save.mutate();
@@ -61,17 +61,17 @@ export default function AdminAjustesPage() {
             onChange={(e) => setForm({ ...form, heroClaim: e.target.value })}
           />
         </Field>
-        <label className="flex items-center gap-2 text-sm font-bold">
+        <label className="flex items-center gap-2 text-sm font-semibold">
           <input
             type="checkbox"
-            checked={form.gridDefaultOn ?? false}
-            onChange={(e) => setForm({ ...form, gridDefaultOn: e.target.checked })}
+            checked={form.gridDefault ?? false}
+            onChange={(e) => setForm({ ...form, gridDefault: e.target.checked })}
           />
           Cuadrícula activada por defecto en el editor
         </label>
         <div className="flex items-center gap-3">
           <AdminButton type="submit" disabled={save.isPending}>Guardar</AdminButton>
-          {saved && <span className="text-sm font-bold text-success">Guardado ✓</span>}
+          {saved && <span className="text-sm font-semibold text-success">Guardado</span>}
         </div>
       </form>
     </div>

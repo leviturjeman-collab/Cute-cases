@@ -2,16 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import Link from 'next/link';
 import { Button } from '@/components/ui';
 
-const KEY = 'cc_cookies';
+const KEY = 'cc.consent';
 
 /**
- * Banner de cookies (§13): rechazar tan fácil como aceptar; la analítica
- * solo se activa tras consentimiento.
+ * Consentimiento de cookies (SS5.4, SS19): rechazar es tan facil como
+ * aceptar; la analitica solo se activa tras aceptar (SS22).
  */
 export function CookieBanner() {
-  const t = useTranslations('cookies');
+  const t = useTranslations();
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -29,25 +30,25 @@ export function CookieBanner() {
       // sin almacenamiento: no insistimos
     }
     setVisible(false);
-    if (accepted) {
-      window.dispatchEvent(new CustomEvent('cc:analytics-consent'));
-    }
   };
 
   if (!visible) return null;
   return (
     <div
       role="dialog"
-      aria-label={t('texto')}
-      className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-md rounded-card bg-surface p-4 shadow-lg"
+      aria-label={t('legal.cookies')}
+      className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-md rounded-card border border-border bg-surface p-4 shadow-2"
     >
-      <p className="mb-3 text-sm">{t('texto')}</p>
+      <p className="mb-3 text-sm text-text">
+        {t('cookies.texto')}{' '}
+        <Link href="/legal/cookies" className="text-pink-700 underline">
+          {t('legal.cookies')}
+        </Link>
+      </p>
       <div className="flex gap-2">
-        <Button size="sm" onClick={() => decide(true)}>
-          {t('aceptar')}
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => decide(false)}>
-          {t('rechazar')}
+        <Button onClick={() => decide(true)}>{t('cookies.aceptar')}</Button>
+        <Button variant="secondary" onClick={() => decide(false)}>
+          {t('cookies.rechazar')}
         </Button>
       </div>
     </div>

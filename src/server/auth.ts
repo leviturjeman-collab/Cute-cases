@@ -118,13 +118,13 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 /** Exige sesión; lanza AUTH si no la hay (§12.3). */
 export async function requireUser(): Promise<SessionUser> {
   const user = await getSessionUser();
-  if (!user) throw new ApiException('AUTH', 'Sesión requerida');
+  if (!user) throw new ApiException('AUTH_REQUIRED', 'Sesion requerida');
   return user;
 }
 
 /** Exige rol admin comprobado en servidor en cada endpoint (§11). */
 export async function requireAdmin(): Promise<SessionUser> {
   const user = await requireUser();
-  if (user.rol !== 'admin') throw new ApiException('ADMIN', 'Requiere rol admin');
+  if (user.rol !== 'admin') throw new ApiException('FORBIDDEN', 'Requiere rol admin');
   return user;
 }

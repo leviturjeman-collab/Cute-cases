@@ -1,6 +1,7 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useRef } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 
 export interface TabItem {
   id: string;
@@ -14,25 +15,49 @@ export interface TabsProps {
   label: string;
 }
 
-/** Pestañas horizontales scrollables (categorías del editor, galería…). */
+/** SS4.4: subrayado 2 px pink-500, scrollables con desvanecido, teclado. */
 export function Tabs({ tabs, active, onChange, label }: TabsProps) {
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    const idx = tabs.findIndex((t) => t.id === active);
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      onChange(tabs[Math.min(tabs.length - 1, idx + 1)]!.id);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      onChange(tabs[Math.max(0, idx - 1)]!.id);
+    }
+  };
+
   return (
-    <div role="tablist" aria-label={label} className="flex gap-1 overflow-x-auto py-1">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          role="tab"
-          aria-selected={active === tab.id}
-          onClick={() => onChange(tab.id)}
-          className={`shrink-0 whitespace-nowrap rounded-pill px-4 py-2 text-sm font-bold transition-colors duration-150 ${
-            active === tab.id
-              ? 'bg-pink-600 text-white shadow-sm'
-              : 'text-text-soft hover:bg-pink-100'
-          }`}
-        >
-          {tab.label}
-        </button>
-      ))}
+    <div
+      ref={listRef}
+      role="tablist"
+      aria-label={label}
+      onKeyDown={onKeyDown}
+      className="tabs-fade flex gap-1 overflow-x-auto"
+    >
+      {tabs.map((tab) => {
+        const isActive = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={isActive}
+            tabIndex={isActive ? 0 : -1}
+            onClick={() => onChange(tab.id)}
+            className={`relative shrink-0 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors duration-120 ${
+              isActive ? 'text-text' : 'text-text-soft hover:text-text'
+            }`}
+          >
+            {tab.label}
+            {isActive && (
+              <span aria-hidden className="absolute inset-x-2 bottom-0 h-0.5 rounded bg-pink-500" />
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

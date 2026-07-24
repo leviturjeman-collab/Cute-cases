@@ -117,13 +117,13 @@ export default function AdminFundasPage() {
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold">Fundas</h1>
+        <h1 className="text-xl font-semibold">Fundas</h1>
         <AdminButton onClick={() => setEditing({ ...emptyCase })}>+ Nueva funda</AdminButton>
       </div>
 
       {e && (
         <form
-          className="mb-6 grid gap-3 rounded-thumb border border-pink-200 bg-white p-4 md:grid-cols-2"
+          className="mb-6 grid gap-3 rounded-thumb border border-border bg-surface p-4 md:grid-cols-2"
           onSubmit={(ev) => {
             ev.preventDefault();
             save.mutate(e);
@@ -136,7 +136,12 @@ export default function AdminFundasPage() {
             <input className={inputCls} value={e.nombre} onChange={(ev) => setEditing({ ...e, nombre: ev.target.value })} />
           </Field>
           <Field label="Material">
-            <input className={inputCls} value={e.material} onChange={(ev) => setEditing({ ...e, material: ev.target.value })} />
+            <select className={inputCls} value={e.material} onChange={(ev) => setEditing({ ...e, material: ev.target.value })}>
+              <option value="silicona">silicona</option>
+              <option value="transparente">transparente</option>
+              <option value="rigida">rigida</option>
+              <option value="rigida-perlada">rigida-perlada</option>
+            </select>
           </Field>
           <Field label="Asset 3D (glTF)">
             <input className={inputCls} value={e.asset3dUrl} onChange={(ev) => setEditing({ ...e, asset3dUrl: ev.target.value })} />
@@ -147,10 +152,10 @@ export default function AdminFundasPage() {
             </Field>
           </div>
           <div className="md:col-span-2">
-            <p className="mb-1 text-sm font-bold">Modelos compatibles</p>
+            <p className="mb-1 text-sm font-semibold">Modelos compatibles</p>
             <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto">
               {devicesData?.devices.map((d) => (
-                <label key={d.id} className="flex items-center gap-1 rounded-pill border border-pink-200 px-2 py-1 text-xs font-bold">
+                <label key={d.id} className="flex items-center gap-1 rounded-control border border-border px-2 py-1 text-xs font-semibold">
                   <input
                     type="checkbox"
                     checked={e.deviceIds.includes(d.id)}
@@ -168,11 +173,11 @@ export default function AdminFundasPage() {
               ))}
             </div>
           </div>
-          <label className="flex items-center gap-2 text-sm font-bold">
+          <label className="flex items-center gap-2 text-sm font-semibold">
             <input type="checkbox" checked={e.activo} onChange={(ev) => setEditing({ ...e, activo: ev.target.checked })} />
             Activa
           </label>
-          <label className="flex items-center gap-2 text-sm font-bold">
+          <label className="flex items-center gap-2 text-sm font-semibold">
             <input type="checkbox" checked={e.destacada} onChange={(ev) => setEditing({ ...e, destacada: ev.target.checked })} />
             Destacada
           </label>
@@ -185,12 +190,12 @@ export default function AdminFundasPage() {
 
       <div className="flex flex-col gap-4">
         {data?.cases.map((c) => (
-          <div key={c.id} className="rounded-thumb border border-pink-200 bg-white p-4">
+          <div key={c.id} className="rounded-thumb border border-border bg-surface p-4">
             <div className="mb-2 flex items-center justify-between">
               <div>
-                <p className="font-bold">
+                <p className="font-semibold">
                   {c.nombre} <span className="text-xs text-text-soft">/{c.slug}</span>{' '}
-                  {c.activo ? '✅' : '—'} {c.destacada ? '⭐' : ''}
+                  {c.activo ? 'Sí' : '—'} {c.destacada ? '(destacada)' : ''}
                 </p>
                 <p className="text-xs text-text-soft">
                   {c.material} · {c.compat.length} modelos compatibles
@@ -220,7 +225,7 @@ export default function AdminFundasPage() {
             </div>
             <AdminTable headers={['Color', 'Hex', 'Precio', 'Disponible', '']}>
               {c.variantes.map((v) => (
-                <tr key={v.id} className="border-b border-pink-50">
+                <tr key={v.id} className="border-b border-border">
                   <td className="px-3 py-1.5">{v.colorNombre}</td>
                   <td className="px-3 py-1.5">
                     <span className="inline-block h-4 w-4 rounded-full border align-middle" style={{ backgroundColor: v.colorHex }} />{' '}

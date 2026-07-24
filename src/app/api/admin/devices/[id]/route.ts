@@ -11,9 +11,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const admin = await requireAdmin();
     const parsed = deviceSchema.partial().safeParse(await req.json());
-    if (!parsed.success) return apiError('S-03', parsed.error.message);
+    if (!parsed.success) return apiError('VALIDATION', parsed.error.message);
     const device = await prisma.deviceModel.update({ where: { id: params.id }, data: parsed.data });
-    await audit(admin.id, 'actualizar', 'DeviceModel', device.id);
+    await audit(admin.id, 'update', 'DeviceModel', device.id);
     return NextResponse.json(device);
   } catch (e) {
     return handleApiError(e);
@@ -24,7 +24,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
   try {
     const admin = await requireAdmin();
     await prisma.deviceModel.delete({ where: { id: params.id } });
-    await audit(admin.id, 'eliminar', 'DeviceModel', params.id);
+    await audit(admin.id, 'delete', 'DeviceModel', params.id);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return handleApiError(e);

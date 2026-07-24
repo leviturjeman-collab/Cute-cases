@@ -11,7 +11,7 @@ export function rateLimit(key: string, maxAttempts: number, windowMs: number): v
   const now = Date.now();
   const hits = (buckets.get(key) ?? []).filter((t) => now - t < windowMs);
   if (hits.length >= maxAttempts) {
-    throw new ApiException('RATE_LIMIT', 'Demasiados intentos, prueba más tarde');
+    throw new ApiException('RATE_LIMITED', 'Demasiados intentos');
   }
   hits.push(now);
   buckets.set(key, hits);

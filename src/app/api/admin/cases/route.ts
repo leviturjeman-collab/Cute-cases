@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   try {
     const admin = await requireAdmin();
     const parsed = caseSchema.safeParse(await req.json());
-    if (!parsed.success) return apiError('S-03', parsed.error.message);
+    if (!parsed.success) return apiError('VALIDATION', parsed.error.message);
     const { deviceIds, ...data } = parsed.data;
     const caseBase = await prisma.caseBase.create({
       data: {
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
         compat: { create: deviceIds.map((deviceId) => ({ deviceId })) },
       },
     });
-    await audit(admin.id, 'crear', 'CaseBase', caseBase.id);
+    await audit(admin.id, 'create', 'CaseBase', caseBase.id);
     return NextResponse.json(caseBase, { status: 201 });
   } catch (e) {
     return handleApiError(e);

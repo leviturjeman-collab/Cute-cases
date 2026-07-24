@@ -7,14 +7,14 @@ import { settingsSchema } from '@/server/adminSchemas';
 
 export const dynamic = 'force-dynamic';
 
-/** GET — ajustes globales (§11): margen de colisión, textos hero, cuadrícula. */
+/** GET/PATCH ajustes (SS17): fila singleton Settings (SS12). */
 export async function GET() {
   try {
     await requireAdmin();
-    const settings = await prisma.appSetting.findMany();
-    const map: Record<string, unknown> = {};
-    for (const s of settings) map[s.key] = s.value;
-    return NextResponse.json({ settings: map });
+    const settings =
+      (await prisma.settings.findUnique({ where: { id: 1 } })) ??
+      (await prisma.settings.create({ data: { id: 1 } }));
+    return NextResponse.json({ settings });
   } catch (e) {
     return handleApiError(e);
   }
@@ -24,18 +24,15 @@ export async function PATCH(req: NextRequest) {
   try {
     const admin = await requireAdmin();
     const parsed = settingsSchema.safeParse(await req.json());
-    if (!parsed.success) return apiError('S-03', parsed.error.message);
-    for (const [key, value] of Object.entries(parsed.data)) {
-      if (value === undefined) continue;
-      const jsonValue = value as string | number | boolean;
-      await prisma.appSetting.upsert({
-        where: { key },
-        create: { key, value: jsonValue },
-        update: { value: jsonValue },
-      });
-      await audit(admin.id, 'actualizar', 'AppSetting', key);
-    }
-    return NextResponse.json({ ok: true });
+    if (!parsed.success) return apiError('VALIDATION', parsed.error.message);
+    const before = await prisma.settings.findUnique({ where: { id: 1 } });
+    const settings = await prisma.settings.upsert({
+      where: { id: 1 },
+      create: { id: 1, ...parsed.data },
+      update: parsed.data,
+    });
+    await audit(admin.id, 'update', 'Settings', '1', { before, after: settings });
+    return NextResponse.json({ settings });
   } catch (e) {
     return handleApiError(e);
   }

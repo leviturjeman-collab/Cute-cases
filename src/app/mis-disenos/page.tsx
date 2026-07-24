@@ -1,220 +1,425 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
-import { Copy, Pencil, Share2, Trash2 } from 'lucide-react';
-import { Header } from '@/components/layout/Header';
-import { Footer } from '@/components/layout/Footer';
-import { Badge, Button, Card, EmptyState, Modal, SkeletonGrid, useToast } from '@/components/ui';
+import { Check, Link2, MoreHorizontal, Pencil, X } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import { formatCentimos } from '@/lib/pricing';
+import { relativeTime } from '@/lib/relativeTime';
+import { track } from '@/lib/analytics';
+import { PageShell } from '@/components/layout/PageShell';
+import { ShareSheet } from '@/components/ShareSheet';
+import { Badge, Button, EmptyState, Input, Modal, SkeletonGrid, useToast } from '@/components/ui';
 
-interface MyDesign {
+interface Diseno {
   id: string;
   nombre: string;
   deviceNombre: string;
   precioTotalCache: number;
   thumbnailUrl: string | null;
   shareToken: string;
+  shareNombre: string | null;
   publicadoGaleria: boolean;
+  autorVisible: boolean;
   likesCount: number;
   updatedAt: string;
-  necesitaCambio: boolean;
+  expiredCount: number;
 }
 
-/** Mis diseños (§7.3): sin límite, renombrar/duplicar/eliminar/compartir/galería. */
+interface Page {
+  disenos: Diseno[];
+  nextCursor: string | null;
+}
+
+/** Mis disenos (SS6.6): grid con rename inline, menu contextual y scroll infinito. */
 export default function MisDisenosPage() {
   const t = useTranslations();
   const router = useRouter();
   const { status } = useSession();
   const { showToast } = useToast();
-  const queryClient = useQueryClient();
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState('');
-  const [deleting, setDeleting] = useState<MyDesign | null>(null);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['my-designs'],
-    queryFn: () => api<{ disenos: MyDesign[] }>('/api/designs/mine'),
-    enabled: status === 'authenticated',
-  });
+  const [items, setItems] = useState<Diseno[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+  const [deleting, setDeleting] = useState<Diseno | null>(null);
+  const [sharing, setSharing] = useState<Diseno | null>(null);
+  const sentinel = useRef<HTMLDivElement | null>(null);
 
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['my-designs'] });
+  useEffect(() => {
+    if (status === 'unauthenticated') router.replace('/login?next=%2Fmis-disenos');
+  }, [status, router]);
 
-  const duplicate = useMutation({
-    mutationFn: (id: string) => api(`/api/designs/${id}/duplicate`, { method: 'POST' }),
-    onSuccess: invalidate,
-  });
-  const remove = useMutation({
-    mutationFn: (id: string) => api(`/api/designs/${id}`, { method: 'DELETE' }),
-    onSuccess: invalidate,
-  });
-  const rename = useMutation({
-    mutationFn: ({ id, nombre }: { id: string; nombre: string }) =>
-      api(`/api/designs/${id}`, { method: 'PUT', body: JSON.stringify({ nombre }) }),
-    onSuccess: invalidate,
-  });
-  const toggleGallery = useMutation({
-    mutationFn: ({ id, publicadoGaleria }: { id: string; publicadoGaleria: boolean }) =>
-      api(`/api/designs/${id}/gallery`, {
-        method: 'PATCH',
-        body: JSON.stringify({ publicadoGaleria }),
-      }),
-    onSuccess: (_, vars) => {
-      if (vars.publicadoGaleria) showToast(t('toasts.E04'), 'success');
-      invalidate();
-    },
-  });
-
-  const share = async (d: MyDesign) => {
+  const load = useCallback(async (nextCursor: string | null, replace: boolean) => {
+    setLoading(true);
+    setError(false);
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}/d/${d.shareToken}`);
-      showToast(t('toasts.E03'), 'success');
+      const query = nextCursor ? `?cursor=${nextCursor}` : '';
+      const page = await api<Page>(`/api/designs/mine${query}`);
+      setItems((prev) => (replace ? page.disenos : [...prev, ...page.disenos]));
+      setCursor(page.nextCursor);
+    } catch (e) {
+      if ((e as { status?: number }).status === 401) return;
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (status === 'authenticated') void load(null, true);
+  }, [status, load]);
+
+  // Scroll infinito (paginas de 24, SS6.6)
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !cursor) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && !loading) void load(cursor, false);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [cursor, loading, load]);
+
+  const patch = (id: string, data: Partial<Diseno>) =>
+    setItems((prev) => prev.map((d) => (d.id === id ? { ...d, ...data } : d)));
+
+  const confirmRename = async () => {
+    if (!renaming) return;
+    const value = renaming.value.trim();
+    if (!value) return setRenaming(null);
+    try {
+      await api(`/api/designs/${renaming.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ nombre: value }),
+      });
+      patch(renaming.id, { nombre: value });
     } catch {
-      showToast(t('toasts.E15'), 'error');
+      showToast(t('toasts.T15'), 'error');
+    } finally {
+      setRenaming(null);
     }
   };
 
-  if (status === 'unauthenticated') {
-    router.replace('/login?next=/mis-disenos');
-    return null;
+  const duplicate = async (d: Diseno) => {
+    setMenuFor(null);
+    try {
+      await api(`/api/designs/${d.id}/duplicate`, { method: 'POST' });
+      showToast(t('toasts.T24'), 'success');
+      void load(null, true);
+    } catch {
+      showToast(t('toasts.T15'), 'error');
+    }
+  };
+
+  const togglePublish = async (d: Diseno) => {
+    setMenuFor(null);
+    try {
+      await api(`/api/designs/${d.id}/gallery`, {
+        method: 'PATCH',
+        body: JSON.stringify({ publicado: !d.publicadoGaleria }),
+      });
+      patch(d.id, { publicadoGaleria: !d.publicadoGaleria });
+      if (!d.publicadoGaleria) track('galeria_publicado');
+      showToast(d.publicadoGaleria ? t('toasts.T22') : t('toasts.T04'), 'success');
+    } catch {
+      showToast(t('toasts.T15'), 'error');
+    }
+  };
+
+  const regenerateLink = async (d: Diseno) => {
+    setMenuFor(null);
+    try {
+      const updated = await api<{ shareToken: string }>(
+        `/api/designs/${d.id}/share/regenerate`,
+        { method: 'POST', body: JSON.stringify({}) },
+      );
+      patch(d.id, { shareToken: updated.shareToken });
+      showToast(t('toasts.T21'), 'success');
+    } catch {
+      showToast(t('toasts.T15'), 'error');
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    try {
+      await api(`/api/designs/${deleting.id}`, { method: 'DELETE' });
+      setItems((prev) => prev.filter((d) => d.id !== deleting.id));
+    } catch {
+      showToast(t('toasts.T15'), 'error');
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  if (status !== 'authenticated') {
+    return (
+      <PageShell>
+        <div className="mx-auto max-w-5xl px-4 py-8">
+          <SkeletonGrid count={8} />
+        </div>
+      </PageShell>
+    );
   }
 
   return (
-    <>
-      <Header />
-      <main className="mx-auto max-w-4xl px-4 pt-6">
-        <h1 className="mb-4">{t('misDisenos.titulo')}</h1>
-        {isLoading && <SkeletonGrid />}
-        {data && data.disenos.length === 0 && (
-          <EmptyState
-            emoji="🎨"
-            title={t('misDisenos.vacioTitulo')}
-            action={
-              <Button onClick={() => router.push('/modelo')}>{t('misDisenos.vacioCta')}</Button>
-            }
-          />
-        )}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-          {data?.disenos.map((d) => (
-            <Card key={d.id}>
-              <Link href={`/editor/${d.id}`}>
-                <div className="mb-2 flex aspect-square items-center justify-center overflow-hidden rounded-thumb bg-pink-100">
-                  {d.thumbnailUrl ? (
-                    <img src={d.thumbnailUrl} alt={d.nombre} className="h-full w-full object-cover" />
-                  ) : (
-                    <span className="text-5xl">💖</span>
-                  )}
-                </div>
-              </Link>
-              {renamingId === d.id ? (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    rename.mutate({ id: d.id, nombre: renameValue });
-                    setRenamingId(null);
-                  }}
-                >
-                  <input
-                    autoFocus
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onBlur={() => setRenamingId(null)}
-                    maxLength={60}
-                    className="w-full rounded-pill border-2 border-pink-300 px-3 py-1 font-bold"
-                  />
-                </form>
-              ) : (
-                <p className="truncate font-bold">{d.nombre}</p>
-              )}
-              <p className="text-xs text-text-soft">{d.deviceNombre}</p>
-              <p className="font-display text-sm font-semibold text-pink-600">
-                {formatCentimos(d.precioTotalCache)}
-              </p>
-              {d.necesitaCambio && (
-                <Badge variant="aviso" className="mt-1">
-                  {t('misDisenos.necesitaCambio')}
-                </Badge>
-              )}
-              <div className="mt-2 flex items-center justify-between">
-                <div className="flex">
-                  <button
-                    type="button"
-                    aria-label={t('common.acciones.renombrar')}
-                    onClick={() => {
-                      setRenamingId(d.id);
-                      setRenameValue(d.nombre);
-                    }}
-                    className="flex h-10 w-10 items-center justify-center rounded-pill text-pink-700 hover:bg-pink-100"
-                  >
-                    <Pencil size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t('common.acciones.duplicar')}
-                    onClick={() => duplicate.mutate(d.id)}
-                    className="flex h-10 w-10 items-center justify-center rounded-pill text-pink-700 hover:bg-pink-100"
-                  >
-                    <Copy size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t('common.acciones.compartir')}
-                    onClick={() => void share(d)}
-                    className="flex h-10 w-10 items-center justify-center rounded-pill text-pink-700 hover:bg-pink-100"
-                  >
-                    <Share2 size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t('common.acciones.eliminar')}
-                    onClick={() => setDeleting(d)}
-                    className="ml-2 flex h-10 w-10 items-center justify-center rounded-pill text-error hover:bg-error-bg"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-              <label className="mt-2 flex items-center justify-between rounded-thumb bg-pink-50 px-3 py-2 text-sm font-bold">
-                {t('misDisenos.publicarGaleria')}
-                <input
-                  type="checkbox"
-                  checked={d.publicadoGaleria}
-                  onChange={(e) => toggleGallery.mutate({ id: d.id, publicadoGaleria: e.target.checked })}
-                  className="h-5 w-5 accent-pink-600"
-                />
-              </label>
-            </Card>
-          ))}
-        </div>
-      </main>
+    <PageShell>
+      <div className="mx-auto max-w-5xl px-4 py-8">
+        <h1 className="font-display text-[28px] font-semibold text-text">
+          {t('misDisenos.titulo')}
+        </h1>
 
-      {/* Confirmación de eliminación (E-17) */}
+        {error ? (
+          <div className="mt-6">
+            <EmptyState
+              title={t('common.estados.error')}
+              action={<Button onClick={() => void load(null, true)}>{t('common.estados.reintentar')}</Button>}
+            />
+          </div>
+        ) : items.length === 0 && !loading ? (
+          <div className="mt-6">
+            <EmptyState
+              title={t('misDisenos.vacioTitulo')}
+              action={
+                <Link href="/modelo">
+                  <Button>{t('misDisenos.vacioCta')}</Button>
+                </Link>
+              }
+            />
+          </div>
+        ) : (
+          <>
+            <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+              {items.map((d) => (
+                <div
+                  key={d.id}
+                  className="group relative overflow-hidden rounded-card border border-border bg-surface shadow-1 transition-shadow duration-200 hover:shadow-2"
+                >
+                  <Link href={`/editor/${d.id}`} className="block">
+                    <div className="relative aspect-[4/5] bg-surface-2">
+                      {d.thumbnailUrl ? (
+                        <Image
+                          src={d.thumbnailUrl}
+                          alt={d.nombre}
+                          fill
+                          sizes="(max-width: 640px) 50vw, 25vw"
+                          className="object-cover"
+                        />
+                      ) : (
+                        <div aria-hidden className="flex h-full items-center justify-center">
+                          <svg
+                            width="44"
+                            height="44"
+                            viewBox="0 0 48 48"
+                            fill="none"
+                            stroke="var(--pink-300)"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                          >
+                            <rect x="14" y="4" width="20" height="40" rx="6" />
+                            <circle cx="20" cy="11" r="2.5" />
+                          </svg>
+                        </div>
+                      )}
+                      {d.expiredCount > 0 && (
+                        <div className="absolute left-2 top-2">
+                          <Badge variant="noDisponible">{t('common.badges.noDisponible')}</Badge>
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+
+                  <div className="p-3">
+                    {renaming?.id === d.id ? (
+                      <div className="flex items-end gap-1.5">
+                        <Input
+                          label={t('editor.renombrar')}
+                          value={renaming.value}
+                          maxLength={40}
+                          showCount
+                          autoFocus
+                          onChange={(e) => setRenaming({ id: d.id, value: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void confirmRename();
+                            if (e.key === 'Escape') setRenaming(null);
+                          }}
+                          className="flex-1"
+                        />
+                        <button
+                          type="button"
+                          aria-label={t('common.acciones.guardar')}
+                          onClick={() => void confirmRename()}
+                          className="flex h-9 w-9 items-center justify-center rounded-control text-success hover:bg-surface-2"
+                        >
+                          <Check size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={t('common.acciones.cancelar')}
+                          onClick={() => setRenaming(null)}
+                          className="flex h-9 w-9 items-center justify-center rounded-control text-text-soft hover:bg-surface-2"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <p className="truncate text-[15px] font-semibold text-text">{d.nombre}</p>
+                        <button
+                          type="button"
+                          aria-label={t('common.acciones.renombrar')}
+                          onClick={() => setRenaming({ id: d.id, value: d.nombre })}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-text-soft opacity-0 transition-opacity hover:bg-surface-2 focus-visible:opacity-100 group-hover:opacity-100"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      </div>
+                    )}
+                    <p className="text-sm text-text-soft">{d.deviceNombre}</p>
+                    <div className="mt-1 flex items-baseline justify-between">
+                      <p className="tabular text-sm font-medium text-text">
+                        {formatCentimos(d.precioTotalCache)}
+                      </p>
+                      <p className="text-xs text-text-soft">
+                        {t('misDisenos.editadoRelativo', { fecha: relativeTime(d.updatedAt) })}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Menu contextual (SS6.6) */}
+                  <div className="absolute right-2 top-2">
+                    <button
+                      type="button"
+                      aria-label={t('misDisenos.opciones')}
+                      aria-expanded={menuFor === d.id}
+                      onClick={() => setMenuFor(menuFor === d.id ? null : d.id)}
+                      className="flex h-8 w-8 items-center justify-center rounded-control bg-surface/90 text-text shadow-1 hover:bg-surface"
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
+                    {menuFor === d.id && (
+                      <div
+                        role="menu"
+                        className="absolute right-0 top-9 z-10 w-52 overflow-hidden rounded-card border border-border bg-surface py-1 shadow-2"
+                      >
+                        <MenuItem onClick={() => router.push(`/editor/${d.id}`)}>
+                          {t('common.acciones.abrir')}
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => {
+                            setMenuFor(null);
+                            setRenaming({ id: d.id, value: d.nombre });
+                          }}
+                        >
+                          {t('common.acciones.renombrar')}
+                        </MenuItem>
+                        <MenuItem onClick={() => void duplicate(d)}>
+                          {t('common.acciones.duplicar')}
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => {
+                            setMenuFor(null);
+                            setSharing(d);
+                          }}
+                        >
+                          {t('common.acciones.compartir')}
+                        </MenuItem>
+                        <MenuItem onClick={() => void togglePublish(d)}>
+                          <span className="flex items-center justify-between gap-2">
+                            {d.publicadoGaleria
+                              ? t('common.acciones.despublicar')
+                              : t('misDisenos.publicarGaleria')}
+                            {d.publicadoGaleria && <Check size={14} className="text-success" aria-hidden />}
+                          </span>
+                        </MenuItem>
+                        <MenuItem onClick={() => void regenerateLink(d)}>
+                          <span className="flex items-center gap-2">
+                            <Link2 size={14} aria-hidden />
+                            {t('misDisenos.regenerarEnlace')}
+                          </span>
+                        </MenuItem>
+                        <MenuItem
+                          destructive
+                          onClick={() => {
+                            setMenuFor(null);
+                            setDeleting(d);
+                          }}
+                        >
+                          {t('common.acciones.eliminar')}
+                        </MenuItem>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {loading && (
+              <div className="mt-4">
+                <SkeletonGrid count={4} />
+              </div>
+            )}
+            <div ref={sentinel} aria-hidden className="h-px" />
+          </>
+        )}
+      </div>
+
+      {/* Eliminar (T-17) */}
       <Modal
-        open={Boolean(deleting)}
+        open={deleting !== null}
         onClose={() => setDeleting(null)}
-        title={deleting ? t('toasts.E17', { nombre: deleting.nombre }) : ''}
+        title={t('toasts.T17', { nombre: deleting?.nombre ?? '' })}
       >
-        <div className="flex gap-2">
-          <Button
-            variant="danger"
-            onClick={() => {
-              if (deleting) remove.mutate(deleting.id);
-              setDeleting(null);
-            }}
-          >
-            {t('common.acciones.eliminar')}
-          </Button>
+        <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={() => setDeleting(null)}>
             {t('common.acciones.cancelar')}
           </Button>
+          <Button variant="danger" onClick={() => void confirmDelete()}>
+            {t('common.acciones.eliminar')}
+          </Button>
         </div>
       </Modal>
-      <Footer />
-    </>
+
+      {sharing && (
+        <ShareSheet
+          open
+          onClose={() => setSharing(null)}
+          designId={sharing.id}
+          shareToken={sharing.shareToken}
+          nombre={sharing.nombre}
+          shareNombre={sharing.shareNombre}
+          thumbnailUrl={sharing.thumbnailUrl}
+        />
+      )}
+    </PageShell>
+  );
+}
+
+function MenuItem({
+  children,
+  onClick,
+  destructive = false,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  destructive?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className={`block w-full px-3.5 py-2 text-left text-sm transition-colors duration-120 hover:bg-surface-2 ${
+        destructive ? 'text-error' : 'text-text'
+      }`}
+    >
+      {children}
+    </button>
   );
 }

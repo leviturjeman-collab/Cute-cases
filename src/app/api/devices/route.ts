@@ -4,27 +4,35 @@ import { handleApiError } from '@/server/errors';
 
 export const dynamic = 'force-dynamic';
 
-/** GET /api/devices — modelos activos agrupados por generación (§12.3). */
+/** GET /api/devices (SS13.1): modelos activos agrupados por generacion. */
 export async function GET() {
   try {
     const devices = await prisma.deviceModel.findMany({
       where: { activo: true },
-      orderBy: [{ generacion: 'desc' }, { orden: 'asc' }],
+      orderBy: [{ generacion: 'desc' }, { nombre: 'asc' }],
       select: {
         id: true,
+        slug: true,
         nombre: true,
         generacion: true,
         anchoMm: true,
         altoMm: true,
         radioEsquinaMm: true,
+        grosorMm: true,
         cameraZone: true,
+        moduloForma: true,
       },
     });
-    const byGeneration: Record<string, typeof devices> = {};
+    const byGen = new Map<string, typeof devices>();
     for (const d of devices) {
-      (byGeneration[d.generacion] ??= []).push(d);
+      const list = byGen.get(d.generacion) ?? [];
+      list.push(d);
+      byGen.set(d.generacion, list);
     }
-    return NextResponse.json({ generaciones: byGeneration });
+    const generaciones = [...byGen.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0], 'es', { numeric: true }))
+      .map(([nombre, modelos]) => ({ nombre, modelos }));
+    return NextResponse.json({ generaciones });
   } catch (e) {
     return handleApiError(e);
   }

@@ -41,12 +41,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const admin = await requireAdmin();
     const parsed = userUpdateSchema.safeParse(await req.json());
-    if (!parsed.success) return apiError('S-03', 'Payload inválido');
+    if (!parsed.success) return apiError('VALIDATION', 'Payload inválido');
     const user = await prisma.user.update({
       where: { id: params.id },
       data: { activo: parsed.data.activo },
     });
-    await audit(admin.id, 'actualizar', 'User', user.id);
+    await audit(admin.id, 'update', 'User', user.id);
     return NextResponse.json({ ok: true, activo: user.activo });
   } catch (e) {
     return handleApiError(e);

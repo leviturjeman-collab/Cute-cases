@@ -45,7 +45,7 @@ export default function AdminUsuariosPage() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-bold">Usuarios</h1>
+      <h1 className="mb-4 text-xl font-semibold">Usuarios</h1>
       <input
         className={`${inputCls} mb-4 w-full max-w-sm`}
         placeholder="Buscar por email o nombre…"
@@ -54,8 +54,8 @@ export default function AdminUsuariosPage() {
       />
       <AdminTable headers={['Email', 'Nombre', 'Proveedor', 'Rol', 'Diseños', 'Activo', '']}>
         {data?.users.map((u) => (
-          <tr key={u.id} className="border-b border-pink-50">
-            <td className="px-3 py-2 font-bold">{u.email}</td>
+          <tr key={u.id} className="border-b border-border">
+            <td className="px-3 py-2 font-semibold">{u.email}</td>
             <td className="px-3 py-2">{u.nombre ?? '—'}</td>
             <td className="px-3 py-2">{u.provider}</td>
             <td className="px-3 py-2">{u.rol}</td>
@@ -78,13 +78,13 @@ export default function AdminUsuariosPage() {
 
       {detailId && detail && (
         <div className="mt-6">
-          <h2 className="mb-2 font-bold">Diseños de {detail.user.email}</h2>
+          <h2 className="mb-2 font-semibold">Diseños de {detail.user.email}</h2>
           <AdminTable headers={['Nombre', 'Precio', 'Galería', 'Actualizado']}>
             {detail.designs.map((d) => (
-              <tr key={d.id} className="border-b border-pink-50">
+              <tr key={d.id} className="border-b border-border">
                 <td className="px-3 py-2">{d.nombre}</td>
                 <td className="px-3 py-2">{(d.precioTotalCache / 100).toFixed(2)} €</td>
-                <td className="px-3 py-2">{d.publicadoGaleria ? '✅' : '—'}</td>
+                <td className="px-3 py-2">{d.publicadoGaleria ? 'Sí' : '—'}</td>
                 <td className="px-3 py-2">{new Date(d.updatedAt).toLocaleDateString('es-ES')}</td>
               </tr>
             ))}

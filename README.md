@@ -1,81 +1,65 @@
-# Cute Cases 💖
+# Cute Cases
 
-E-commerce **mobile-first** para personalizar fundas de iPhone con **charms 3D** y **stickers planos** sobre un editor 3D realista de giro controlado. Implementación de la [especificación funcional y técnica v2](#especificación).
+E-commerce **mobile-first** para disenar fundas de iPhone **pieza a pieza**: charms 3D y stickers reales colocados sobre un editor 3D con orbita por arrastre directo. Implementacion de la **especificacion funcional y tecnica v4** (que sustituye integramente a v1-v3).
+
+## Directivas criticas (v4 SS1)
+
+- **D1 - Cero emojis**: `npm run check:emoji` recorre `/src` y falla el build si aparece uno (paso obligatorio de CI).
+- **D2 - El editor es el producto**: arrastre directo, iman de 1,5 mm, giro con dos dedos, papelera, historial de 50 pasos.
+- **D3 - Camara de orbita por arrastre**: azimut +-80, polar 55-125, damping 0.08, zoom 0.8-1.8x, chips de vista con animacion de 400 ms.
+- **D4 - Seed completo**: 21 iPhones (13-17), 6 fundas / 19 variantes, 48 elementos + coleccion Verano + 74 glifos de letras, 4 preestablecidos validados contra colisiones.
+- **D5 - Assets procedurales**: recetas three.js parametrizadas (`src/assets-procedural`), sustituibles por GLB via `assetUrl` sin migracion.
+- **D9 - El servidor siempre revalida**: colisiones y precios se recalculan en cada guardado/lectura (`src/server/designService.ts`).
+- **D10 - Todo texto de interfaz** sale de `src/lib/i18n/messages/es.json` (microcopy T-01..T-24 incluido).
 
 ## Stack
 
-Next.js 14 (App Router) · React 18 · TypeScript estricto · Tailwind (tokens §2) · three.js + react-three-fiber + drei · Zustand (historial undo/redo) · TanStack Query · PostgreSQL + Prisma · NextAuth (credentials argon2id + Google + Apple) · next-intl (`es`, listo para i18n) · Zod en todos los límites · Vitest.
+Next.js 14 (App Router) - React 18 - TypeScript estricto - Tailwind (tokens SS3) - three.js + react-three-fiber + drei - Zustand (historial undo/redo) - TanStack Query - PostgreSQL + Prisma - NextAuth (credentials argon2id + Google/Apple opcionales) - next-intl (`es`) - Zod en todos los limites - Vitest + Playwright.
 
-## Arranque rápido
+## Arranque rapido
 
 ```bash
 npm install
-cp .env.example .env          # ajusta DATABASE_URL/DIRECT_URL y NEXTAUTH_SECRET
-docker compose up -d          # PostgreSQL local
-npx prisma db push            # crea el esquema
-npm run db:seed               # seeds de desarrollo (21 iPhones, fundas, ~70 elementos)
+cp .env.example .env   # DATABASE_URL/DIRECT_URL, NEXTAUTH_SECRET
+npx prisma db push     # crea el esquema
+npm run db:seed        # seed v4 completo (D4) + demo en desarrollo
 npm run dev
 ```
 
-> **Base de datos elegida: Supabase** (aún sin conectar). El esquema ya está
-> preparado: `DATABASE_URL` = Transaction pooler (6543, `?pgbouncer=true`) y
-> `DIRECT_URL` = conexión directa (5432) para migraciones — plantilla en
-> `.env.example`. Mientras tanto, el docker-compose local funciona igual.
-
-Usuarios del seed: `admin@cutecases.dev` / `demo@cutecases.dev` (contraseña `cutecases123`).
+Usuarios demo (solo con `SEED_DEMO_CONTENT` activo, por defecto en desarrollo): `admin@cutecases.dev`, `demo@cutecases.dev`, `estudio@cutecases.dev` (contrasena `cutecases-dev` o la de `SEED_ADMIN_PASSWORD`).
 
 ```bash
-npm run ci      # typecheck + lint + tests
-npm test        # tests unitarios (colisiones SAT, precios, letras)
+npm run ci           # check:emoji + typecheck + lint + tests
+npm test             # unitarios: SAT (SS8.4), colocacion, precios, letras
+npx playwright test  # happy path E2E (servidor sembrado; E2E_BASE_URL configurable)
 ```
+
+## Motor de colisiones (SS8)
+
+SAT sobre poligonos convexos en el plano trasero: contorno de funda de 28 vertices, margen de Settings como inflado de proyecciones, zona de camara inflada 1 mm, busqueda en espiral para colocacion automatica (paso 2 mm, <=400 candidatos, 4 rotaciones). Fuente unica compartida cliente/servidor en `src/lib/collision`.
+
+## Renders de catalogo (SS10.5)
+
+Utilidad interna `/dev/renders` (solo desarrollo): genera las imagenes de `/public/renders` (tarjetas de fundas, preestablecidos, hero y pasos) con las camaras nombradas "frontal" y "tres-cuartos". Automatizable con Playwright contra `npm run dev`.
+
+## Despliegue
+
+- **Vercel**: build estandar (`next build`); las paginas SSG consultan la BD en build, por lo que `DATABASE_URL`/`DIRECT_URL` deben estar disponibles en build.
+- **Supabase**: `DATABASE_URL` = transaction pooler (6543, `?pgbouncer=true`), `DIRECT_URL` = conexion directa (5432). Miniaturas en Storage (`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, bucket `thumbnails`); sin credenciales, en desarrollo actua un receptor local.
 
 ## Estructura
 
 ```
-/src
-  /app            rutas Next (públicas §5, /api §12.3, /admin §11)
-  /components     design system §2.6 + layout + admin
-  /editor         visor 3D, gestos, store Zustand con historial, autosave
-  /lib
-    /collision    SAT + broad-phase AABB + colocación (TS puro, testeado, §6.6)
-    /pricing      precios en céntimos (TS puro, testeado, §6.7)
-    /letters      normalización del generador de letras (§4.4)
-    /i18n         diccionarios (100% del microcopy §17)
-  /server         Prisma, Auth, validación de defensa en profundidad §12.5
-/prisma           esquema §12.2 + seed de desarrollo
-/tests            unit tests (casos límite §18)
+prisma/                esquema SS12 + seed SS11
+src/lib/collision      SAT, geometria, colocacion (pura, testeada)
+src/lib/silhouettes    siluetas de recetas -> hitboxes (SS11.6)
+src/lib/pricing        precios en centimos (SS7.9)
+src/lib/letters        normalizacion y metricas de letras (SS13.1)
+src/assets-procedural  recetas three.js, materiales SS9, miniaturas SS10.4
+src/editor             editor 3D SS7 (store, gestos, visor, autosave)
+src/components         design system SS4 + layout + tarjetas
+src/app                rutas SS5.1 (paginas, editor, admin, API SS13)
+src/server             validacion canonica, servicios, errores estables
 ```
 
-## Calidad visual
-
-La UI pasó la auditoría de `Leonxlnx/taste-skill` (instalada en `.agents/skills/`) en modo redesign–preserve: contraste AA en CTAs, feedback táctil, estados completos, bloqueo de consistencia de forma y color. Detalle en [DESIGN_NOTES.md](./DESIGN_NOTES.md).
-
-## Decisiones y estado de implementación
-
-### Cumplido según especificación
-- **Coordenadas en mm reales** y precios en céntimos en todo el modelo de datos; el archivo de producción para el proveedor saldrá "gratis" de `Design.elementos`.
-- **Colisiones**: SAT con descomposición de cóncavos (ear clipping), broad-phase AABB, margen de seguridad configurable desde admin, mismo módulo TS en cliente y servidor.
-- **Validación en servidor (§12.5)**: existencia/actividad/caducidad, colisiones, recálculo de precio ignorando el del cliente, ownership. Tests de los casos §18.18–19 incluidos.
-- **Editor**: 5 vistas controladas, tamaño fijo inescalable, rotación libre 360° (pinch = SOLO rotación), imán suave solo de posición (1,5 mm), reversión animada + E-05, precio en vivo con desglose, undo/redo (50 acciones), generador de letras con fila centrada y separación de 2 mm, autosave local 500 ms, flujo invitado→registro sin pérdida, flujo de caducados §4.5, teclado completo §15.
-- **Compartir**: imagen stories 1080×1920 con marca de agua (Web Share API + fallback), enlace regalo `/d/token` (CSPRNG 160 bits, noindex, OG dinámico).
-- **Galería** opt-in revocable con likes y reportes; moderación en admin.
-- **Cesta UI** con merge invitado↔cuenta sin duplicados y checkout placeholder honesto (E-18).
-- **Admin completo** con auditoría: dispositivos (editor visual de zona de cámara), fundas+variantes, elementos (hitbox autogenerada desde PNG + editor de vértices), letras, temporadas, preestablecidos (validación idéntica al editor), moderación, usuarios, ajustes.
-
-### Decisiones tomadas (pendientes en la spec, con default aplicado)
-- Imagen para redes: **solo 9:16** (default de la spec; el 1080×1080 queda preparado en `shareImage.ts`).
-- Galería: **sin** "usar como inspiración" (default de la spec: no duplicar diseños ajenos).
-
-### Simplificaciones honestas (a evolucionar)
-- **Assets 3D**: no existen aún GLB/PNG del proveedor; los seeds usan el esquema `procedural://` que el visor renderiza con geometría procedural (corazones/lazos/estrellas extruidos, etc.). El campo `assetUrl` acepta GLB/PNG reales sin tocar código.
-- ⚠️ **Dimensiones de dispositivos del seed**: aproximadas, SOLO para desarrollo. Antes de producción, introducir medidas verificadas desde el admin (§4.1). El código no hardcodea ninguna medida.
-- Hitbox autogen: casco convexo + Douglas-Peucker sobre el alfa del PNG (la spec sugiere marching squares; el resultado es ajustable a mano en el editor de vértices).
-- Orden del carrusel de preestablecidos: botones ↑/↓ en lugar de drag & drop.
-- Rate limiting en memoria (interfaz lista para Upstash/Redis en producción multi-instancia).
-- Miniaturas en `/public/uploads` en desarrollo; producción requiere storage S3-compatible + CDN.
-- Analítica (§16): eventos definidos en la spec, integración de herramienta (Plausible/PostHog UE) pendiente de decidir cuenta/hosting; el consentimiento de cookies ya emite `cc:analytics-consent`.
-- Playwright (happy path del editor) y verificación de email: pendientes.
-
-## Especificación
-
-La fuente de verdad es el documento *CUTE CASES — Especificación Funcional y Técnica Completa (v2)*. Las referencias `§n` de este README y del código apuntan a sus secciones.
+Notas de decisiones y desviaciones: [DESIGN_NOTES.md](DESIGN_NOTES.md).

@@ -1,11 +1,8 @@
 'use client';
 
-/**
- * Modelo de iPhone recordado (§5.3): siempre en localStorage; además en la
- * cuenta si hay sesión (PATCH /api/account desde la página de selección).
- */
+/** Modelo recordado (SS5.4): clave cc.device en localStorage. */
 
-const KEY = 'cc_device';
+const KEY = 'cc.device';
 
 export interface RememberedDevice {
   id: string;
@@ -28,7 +25,7 @@ export function rememberDevice(device: RememberedDevice): void {
   try {
     window.localStorage.setItem(KEY, JSON.stringify(device));
   } catch {
-    // almacenamiento lleno o bloqueado: no es crítico
+    // best-effort
   }
 }
 

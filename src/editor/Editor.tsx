@@ -6,42 +6,34 @@ import { useTranslations } from 'next-intl';
 import { useSession } from 'next-auth/react';
 import { useQuery } from '@tanstack/react-query';
 import type { ThreeEvent } from '@react-three/fiber';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import {
-  ArrowLeft, Check, ChevronLeft, ChevronRight, Crosshair, MoreHorizontal,
-  Pencil, Redo2, RotateCw, Share2, ShoppingBag, Trash2, Undo2,
+  ArrowDown, ArrowLeft, ArrowUp, ArrowRight as ArrowRightIcon, Check, Crosshair,
+  MoreHorizontal, Pencil, Redo2, RotateCw, Share2, ShoppingBag, Trash2, Undo2,
 } from 'lucide-react';
 import {
-  Badge, BottomSheet, Button, Confetti, Input, Modal, PriceTag, Tabs, useToast,
+  Badge, BottomSheet, Button, Input, Modal, PriceTag, SHEET_HEIGHTS_PX, Tabs, useToast,
   type SheetPosition,
 } from '@/components/ui';
 import { api, ApiClientError } from '@/lib/api-client';
 import { getRememberedDevice } from '@/lib/deviceStorage';
 import {
-  DEFAULT_SAFETY_MARGIN_MM, findFreeSpot, placeLettersRow, validatePlacement,
-  type CaseGeometry, type ElementInstance, type ElementShape, type Polygon,
+  buildSceneContext, esValida, findFreeSpot, placeLettersRow,
+  type ElementShape, type PlacedItem,
 } from '@/lib/collision';
 import { computeBreakdown, computeTotalCentimos, formatCentimos, type PricedElement } from '@/lib/pricing';
-import { CaseViewer, type InstanceVisualState } from './CaseViewer';
+import { loadLetterFont } from '@/assets-procedural';
+import { Viewer3D, type ItemVisualState } from './Viewer3D';
 import { newInstanceId, useEditorStore } from './store';
 import { clearDraft, readDraft, writeDraftDebounced, type LocalDraft } from './autosave';
-import { captureThumbnail, composeStoryImage, shareOrDownload } from './shareImage';
+import { captureThumbnail } from './capture';
+import { ElementThumb } from './ElementThumb';
 import { hasWebGL2 } from './webgl';
-import { VIEWS, viewAllowsPlacement, type CatalogElement, type DeviceGeometry, type ViewName } from './types';
-
-const CATEGORIES = [
-  'letras', 'corazones', 'lazos', 'flores', 'frutas', 'animales', 'estrellas', 'cadenas',
-] as const;
+import type { CatalogElement, CategoryId, DeviceSpec, SnapView } from './types';
+import { CATEGORY_ORDER } from './types';
 
 interface DevicesResponse {
-  generaciones: Record<
-    string,
-    { id: string; nombre: string; anchoMm: number; altoMm: number; radioEsquinaMm: number; cameraZone: Polygon }[]
-  >;
-}
-
-interface ElementsResponse {
-  porCategoria: Record<string, (CatalogElement & { hitbox: Polygon; precioCentimos: number })[]>;
-  temporada: { id: string; nombre: string; emoji: string } | null;
+  generaciones: { nombre: string; modelos: DeviceSpec[] }[];
 }
 
 interface CasesResponse {
@@ -51,76 +43,95 @@ interface CasesResponse {
   }[];
 }
 
-/** Editor 3D completo (§6). */
+interface ElementsResponse {
+  porCategoria: Record<string, CatalogElement[]>;
+  temporada: { id: string; slug: string; nombre: string } | null;
+}
+
+const DEG = Math.PI / 180;
+
+/** Editor 3D v4 (SS7). D2: es el producto. */
 export function Editor({ designId }: { designId?: string }) {
   const t = useTranslations();
   const router = useRouter();
   const params = useSearchParams();
-  const { status } = useSession();
+  const { status: authStatus } = useSession();
   const { showToast } = useToast();
   const store = useEditorStore();
 
   const [webgl] = useState(() => (typeof window === 'undefined' ? true : hasWebGL2()));
-  const [view, setView] = useState<ViewName>('trasera');
-  const [zoom, setZoom] = useState(1);
+  const [fontReady, setFontReady] = useState(false);
   const [sheetPos, setSheetPos] = useState<SheetPosition>('half');
   const [activeTab, setActiveTab] = useState<string>(params.get('tab') === 'temporada' ? 'temporada' : 'corazones');
   const [showGrid, setShowGrid] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [breakdownOpen, setBreakdownOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
-  const [confetti, setConfetti] = useState(0);
-  const [lettersText, setLettersText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [snapTarget, setSnapTarget] = useState<SnapView | null>('trasera');
+  const [cameraState, setCameraState] = useState({ azimuthDeg: 0, polarDeg: 82 });
+  const [guides, setGuides] = useState<{ v?: number | null; h?: number | null }>({});
+  const [liveStates, setLiveStates] = useState<Map<string, ItemVisualState>>(new Map());
+  const [ghost, setGhost] = useState<PlacedItem | null>(null);
+  const [rotationTooltip, setRotationTooltip] = useState<number | null>(null);
   const [expiredIds, setExpiredIds] = useState<Set<string>>(new Set());
   const [expiredModal, setExpiredModal] = useState(false);
+  const [replacingId, setReplacingId] = useState<string | null>(null);
   const [draftPrompt, setDraftPrompt] = useState<LocalDraft | null>(null);
   const [authPrompt, setAuthPrompt] = useState(false);
-  const viewerRef = useRef<HTMLDivElement>(null);
+  const [conflict, setConflict] = useState<{ serverUpdatedAt: string } | null>(null);
+  const [trashActive, setTrashActive] = useState(false);
 
-  // Gestos en curso
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const dragRef = useRef<{
-    instanceId: string;
+    id: string;
     pointerId: number;
-    isNew: boolean;
-    hadValid: boolean;
-    lastValid: { xMm: number; yMm: number; rotacionGrados: number };
+    startX: number;
+    startY: number;
     moved: boolean;
     isTouch: boolean;
+    lastValid: { xMm: number; yMm: number; rotationDeg: number };
+    hadValid: boolean;
+    isGhost: boolean;
   } | null>(null);
-  const twistRef = useRef<{ instanceId: string; startAngle: number; startRotation: number } | null>(null);
-  const pinchRef = useRef<{ startDist: number; startZoom: number } | null>(null);
-  const swipeRef = useRef<{ x: number; y: number; onEmpty: boolean } | null>(null);
+  const twistRef = useRef<{ id: string; startAngle: number; startRot: number } | null>(null);
+  const handleRef = useRef<{ id: string; startRot: number } | null>(null);
   const lastTapRef = useRef(0);
-  const [liveInvalid, setLiveInvalid] = useState<Map<string, InstanceVisualState>>(new Map());
-  const [guides, setGuides] = useState<{ v?: number | null; h?: number | null }>({});
+  const pendingAddRef = useRef<CatalogElement | null>(null);
 
-  // ---------- Datos ----------
+  // ---------- datos ----------
   const { data: devicesData } = useQuery({
     queryKey: ['devices'],
     queryFn: () => api<DevicesResponse>('/api/devices'),
   });
-  const { data: elementsData, isLoading: elementsLoading, isError: elementsError, refetch: refetchElements } = useQuery({
+  const { data: casesData } = useQuery({
+    queryKey: ['cases-all'],
+    queryFn: async () => {
+      const deviceId = useEditorStore.getState().deviceId ?? getRememberedDevice()?.id;
+      return api<CasesResponse>(`/api/cases?deviceId=${deviceId}`);
+    },
+    enabled: Boolean(store.deviceId || getRememberedDevice()?.id),
+  });
+  const { data: elementsData, isError: elementsError, refetch: refetchElements } = useQuery({
     queryKey: ['elements'],
     queryFn: () => api<ElementsResponse>('/api/elements'),
   });
 
-  const rememberedDevice = useMemo(() => getRememberedDevice(), []);
+  useEffect(() => {
+    void loadLetterFont().then(() => setFontReady(true)).catch(() => setFontReady(true));
+  }, []);
+
   const allDevices = useMemo(
-    () => (devicesData ? Object.values(devicesData.generaciones).flat() : []),
+    () => devicesData?.generaciones.flatMap((g) => g.modelos) ?? [],
     [devicesData],
   );
-  const device: DeviceGeometry | null = useMemo(() => {
-    const id = store.deviceId ?? rememberedDevice?.id;
+  const device = useMemo(() => {
+    const id = store.deviceId ?? getRememberedDevice()?.id;
     return allDevices.find((d) => d.id === id) ?? null;
-  }, [allDevices, store.deviceId, rememberedDevice]);
-
-  const { data: casesData } = useQuery({
-    queryKey: ['cases', device?.id],
-    queryFn: () => api<CasesResponse>(`/api/cases?deviceId=${device!.id}`),
-    enabled: Boolean(device),
-  });
+  }, [allDevices, store.deviceId]);
 
   const catalog = useMemo(() => {
     const map = new Map<string, CatalogElement>();
@@ -134,634 +145,719 @@ export function Editor({ designId }: { designId?: string }) {
 
   const shapes = useMemo(() => {
     const map = new Map<string, ElementShape>();
-    catalog.forEach((el, id) => {
-      map.set(id, {
-        hitbox: (el.hitbox as Polygon | undefined) ?? [],
-        anchoMm: el.anchoMm,
-        altoMm: el.altoMm,
-      });
-    });
+    catalog.forEach((el, id) => map.set(id, { hitbox: el.hitbox, anchoMm: el.anchoMm, altoMm: el.altoMm }));
     return map;
   }, [catalog]);
 
   const priced = useMemo(() => {
     const map = new Map<string, PricedElement>();
-    catalog.forEach((el, id) => {
-      map.set(id, { precioCentimos: el.precioCentimos ?? 0, nombre: el.nombre });
-    });
+    catalog.forEach((el, id) => map.set(id, { precioCentimos: el.precioCentimos, nombre: el.nombre }));
     return map;
   }, [catalog]);
 
-  const currentVariant = useMemo(() => {
-    for (const funda of casesData?.fundas ?? []) {
-      const v = funda.variantes.find((x) => x.id === store.caseVariantId);
-      if (v) return { ...v, material: funda.material, nombre: funda.nombre, slug: funda.slug };
-    }
-    return null;
-  }, [casesData, store.caseVariantId]);
+  const currentCase = useMemo(
+    () => casesData?.fundas.find((f) => f.variantes.some((v) => v.id === store.variantId)) ?? null,
+    [casesData, store.variantId],
+  );
+  const currentVariant = currentCase?.variantes.find((v) => v.id === store.variantId) ?? null;
 
-  const geometry: CaseGeometry | null = useMemo(
-    () =>
-      device
-        ? {
-            anchoMm: device.anchoMm,
-            altoMm: device.altoMm,
-            radioEsquinaMm: device.radioEsquinaMm,
-            cameraZone: device.cameraZone,
-          }
-        : null,
+  const sceneCtx = useMemo(
+    () => (device ? buildSceneContext(device) : null),
     [device],
   );
 
-  // ---------- Inicialización: diseño guardado, borrador local o funda nueva ----------
+  // ---------- inicializacion ----------
   const initialized = useRef(false);
   useEffect(() => {
     if (initialized.current || allDevices.length === 0) return;
-
     const boot = async () => {
       initialized.current = true;
       if (designId) {
         try {
           const design = await api<{
             id: string; nombre: string; deviceId: string; caseVariantId: string;
-            elementos: ElementInstance[]; availability: { disponible: boolean; caducadosIds: string[] };
+            elementos: PlacedItem[]; updatedAt: string;
+            availability: { caducadosElementIds: string[] };
           }>(`/api/designs/${designId}`);
           store.init({
             designId: design.id,
+            serverUpdatedAt: design.updatedAt,
             nombre: design.nombre,
             deviceId: design.deviceId,
-            caseVariantId: design.caseVariantId,
-            instances: design.elementos.map((e) => ({ ...e, instanceId: e.instanceId ?? newInstanceId() })),
+            variantId: design.caseVariantId,
+            items: design.elementos.map((e) => ({ ...e, instanceId: e.instanceId ?? newInstanceId() })),
           });
-          if (design.availability.caducadosIds.length > 0) {
-            setExpiredIds(new Set(design.availability.caducadosIds));
-            setExpiredModal(true); // E-09 (§4.5)
+          if (design.availability.caducadosElementIds.length > 0) {
+            setExpiredIds(new Set(design.availability.caducadosElementIds));
+            setExpiredModal(true);
+            store.setStatus('resolving-expired');
           }
           return;
         } catch {
-          showToast(t('toasts.E15'), 'error');
+          showToast(t('toasts.T15'), 'error');
         }
       }
       const draft = readDraft();
       const variantParam = params.get('variant');
-      const deviceIdWanted = rememberedDevice?.id ?? draft?.deviceId;
+      const deviceIdWanted = getRememberedDevice()?.id ?? draft?.deviceId;
       if (draft && !variantParam) {
         if (draft.pendingSave) {
-          // Volvemos del flujo OAuth: rehidratar y ejecutar el guardado pendiente (§5.7)
           store.init({
-            designId: draft.designId,
-            nombre: draft.nombre,
-            deviceId: draft.deviceId,
-            caseVariantId: draft.caseVariantId,
-            instances: draft.instances,
+            designId: draft.designId, nombre: draft.nombre, deviceId: draft.deviceId,
+            variantId: draft.variantId, items: draft.items,
           });
           return;
         }
-        setDraftPrompt(draft); // E-13
+        setDraftPrompt(draft);
         return;
       }
       if (deviceIdWanted && variantParam) {
         store.init({
-          designId: null,
-          nombre: t('editor.nombrePorDefecto'),
-          deviceId: deviceIdWanted,
-          caseVariantId: variantParam,
-          instances: [],
+          designId: null, nombre: t('editor.nombrePorDefecto'), deviceId: deviceIdWanted,
+          variantId: variantParam, items: [],
         });
         return;
       }
-      if (!deviceIdWanted) {
-        router.replace('/modelo');
-        return;
-      }
-      if (!variantParam && !draft) {
-        router.replace('/fundas');
-      }
+      router.replace(deviceIdWanted ? '/fundas' : '/modelo');
     };
     void boot();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allDevices, designId]);
 
-  // Guardado pendiente tras OAuth (§5.7)
+  // Guardado pendiente tras OAuth (SS15.4)
   const pendingSaveDone = useRef(false);
   useEffect(() => {
     const draft = readDraft();
-    if (
-      status === 'authenticated' &&
-      draft?.pendingSave &&
-      !pendingSaveDone.current &&
-      store.deviceId &&
-      catalog.size > 0
-    ) {
+    if (authStatus === 'authenticated' && draft?.pendingSave && !pendingSaveDone.current && store.deviceId && catalog.size > 0) {
       pendingSaveDone.current = true;
       void doSave();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, store.deviceId, catalog.size]);
+  }, [authStatus, store.deviceId, catalog.size]);
 
-  // ---------- Autosave local (debounce 500 ms, §6.9) ----------
+  // Autosave local (SS5.4)
   useEffect(() => {
-    if (!store.deviceId || !store.caseVariantId) return;
+    if (!store.deviceId || !store.variantId) return;
     writeDraftDebounced({
-      designId: store.designId,
-      nombre: store.nombre,
-      deviceId: store.deviceId,
-      caseVariantId: store.caseVariantId,
-      instances: store.instances,
-      updatedAt: Date.now(),
+      designId: store.designId, nombre: store.nombre, deviceId: store.deviceId,
+      variantId: store.variantId, items: store.items, updatedAt: Date.now(),
     });
-  }, [store.designId, store.nombre, store.deviceId, store.caseVariantId, store.instances]);
+  }, [store.designId, store.nombre, store.deviceId, store.variantId, store.items]);
 
-  // ---------- Precio en tiempo real (§6.7) ----------
+  // Estado listo
+  useEffect(() => {
+    if (device && currentVariant && catalog.size > 0 && fontReady && store.status === 'loading-assets') {
+      store.setStatus('ready');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device, currentVariant, catalog.size, fontReady]);
+
+  // ---------- precio ----------
   const totalCentimos = useMemo(() => {
     if (!currentVariant) return 0;
     try {
-      return computeTotalCentimos(currentVariant.precioCentimos, store.instances, priced);
+      return computeTotalCentimos(currentVariant.precioCentimos, store.items, priced);
     } catch {
       return currentVariant.precioCentimos;
     }
-  }, [currentVariant, store.instances, priced]);
+  }, [currentVariant, store.items, priced]);
 
   const breakdown = useMemo(() => {
-    if (!currentVariant) return null;
+    if (!currentVariant || !currentCase) return null;
     return computeBreakdown(
-      `${currentVariant.nombre} · ${currentVariant.colorNombre}`,
+      `${currentCase.nombre} ${currentVariant.colorNombre}`,
       currentVariant.precioCentimos,
-      store.instances.filter((i) => priced.has(i.elementId)),
+      store.items.filter((i) => priced.has(i.elementId)),
       priced,
     );
-  }, [currentVariant, store.instances, priced]);
+  }, [currentCase, currentVariant, store.items, priced]);
 
-  // ---------- Validación visual ----------
+  // ---------- estados visuales ----------
   const visualStates = useMemo(() => {
-    const map = new Map<string, InstanceVisualState>();
-    for (const inst of store.instances) {
-      const state: InstanceVisualState = {};
-      if (inst.instanceId === store.selectedId) state.selected = true;
-      if (expiredIds.has(inst.elementId)) state.expired = true;
-      const live = liveInvalid.get(inst.instanceId);
-      if (live) Object.assign(state, live);
-      if (Object.keys(state).length > 0) map.set(inst.instanceId, state);
+    const map = new Map<string, ItemVisualState>();
+    for (const item of store.items) {
+      const st: ItemVisualState = {};
+      if (item.instanceId === store.selectedId) st.selected = true;
+      if (expiredIds.has(item.elementId)) st.expired = true;
+      const live = liveStates.get(item.instanceId);
+      if (live) Object.assign(st, live);
+      if (Object.keys(st).length > 0) map.set(item.instanceId, st);
+    }
+    if (ghost) {
+      const st: ItemVisualState = { ghost: true };
+      const live = liveStates.get(ghost.instanceId);
+      if (live) Object.assign(st, live);
+      map.set(ghost.instanceId, st);
     }
     return map;
-  }, [store.instances, store.selectedId, expiredIds, liveInvalid]);
+  }, [store.items, store.selectedId, expiredIds, liveStates, ghost]);
 
-  const hasExpired = expiredIds.size > 0 &&
-    store.instances.some((i) => expiredIds.has(i.elementId));
+  const hasExpired = expiredIds.size > 0 && store.items.some((i) => expiredIds.has(i.elementId));
 
-  // ---------- Helpers de colocación ----------
-  const validate = useCallback(
-    (inst: ElementInstance): boolean => {
-      if (!geometry) return false;
-      const others = store.instances.filter((i) => i.instanceId !== inst.instanceId);
-      const res = validatePlacement(inst, others, shapes, geometry, DEFAULT_SAFETY_MARGIN_MM);
-      const map = new Map<string, InstanceVisualState>();
-      if (!res.valid) {
-        map.set(inst.instanceId, { invalid: true });
-        for (const r of res.reasons) {
-          if (r.type === 'overlap') map.set(r.otherInstanceId, { collidedWith: true });
-        }
+  /** SS7.5: la trasera esta "suficientemente orientada" si el angulo camara-normal <= 65 grados. */
+  const backFacing = useMemo(() => {
+    const cosAngle = Math.sin(cameraState.polarDeg * DEG) * Math.cos(cameraState.azimuthDeg * DEG);
+    return Math.acos(Math.min(1, Math.max(-1, cosAngle))) / DEG <= 65;
+  }, [cameraState]);
+
+  const activeSnap: SnapView | null = useMemo(() => {
+    const near = (a: number, b: number) => Math.abs(a - b) < 5;
+    if (near(cameraState.azimuthDeg, 0) && near(cameraState.polarDeg, 82)) return 'trasera';
+    if (near(cameraState.azimuthDeg, -70) && near(cameraState.polarDeg, 90)) return 'lateral-izq';
+    if (near(cameraState.azimuthDeg, 70) && near(cameraState.polarDeg, 90)) return 'lateral-der';
+    return null;
+  }, [cameraState]);
+
+  // ---------- validacion en vivo ----------
+  const validateLive = useCallback(
+    (item: PlacedItem, includeGhost = false): boolean => {
+      if (!sceneCtx) return false;
+      const others = [...store.items.filter((i) => i.instanceId !== item.instanceId)];
+      if (includeGhost === false && ghost && ghost.instanceId !== item.instanceId) others.push(ghost);
+      const res = esValida(item, others, shapes, sceneCtx);
+      const map = new Map<string, ItemVisualState>();
+      if (!res.valida) {
+        map.set(item.instanceId, { invalid: true });
+        for (const ref of res.refs ?? []) map.set(ref, { collided: true });
       }
-      setLiveInvalid(map);
-      return res.valid;
+      setLiveStates(map);
+      return res.valida;
     },
-    [geometry, store.instances, shapes],
+    [sceneCtx, store.items, shapes, ghost],
   );
 
-  /** Tap en miniatura: añadir al centro libre (espiral) o E-06 (§6.4). */
-  const addElement = (el: CatalogElement) => {
-    if (!geometry) return;
-    if (!viewAllowsPlacement(view)) {
-      showToast(t('toasts.E11'));
-      return;
-    }
-    const shape = shapes.get(el.id);
-    if (!shape) return;
-    const spot = findFreeSpot(el.id, shape, store.instances, shapes, geometry);
-    if (!spot) {
-      showToast(t('toasts.E06'), 'error');
-      return;
-    }
-    store.addInstance({
-      instanceId: newInstanceId(),
-      elementId: el.id,
-      xMm: spot.x,
-      yMm: spot.y,
-      rotacionGrados: 0,
-      ...(el.letraChar ? { letraChar: el.letraChar } : {}),
-    });
-  };
-
-  /** Generador de letras (§4.4). */
-  const createLetters = async () => {
-    if (!geometry || lettersText.trim() === '') return;
-    try {
-      const res = await api<{
-        letras: { letraChar: string; elementId: string; anchoMm: number; altoMm: number; hitbox: Polygon }[];
-        filtered: boolean;
-      }>('/api/letters/expand', { method: 'POST', body: JSON.stringify({ texto: lettersText }) });
-      if (res.filtered) showToast(t('toasts.E08'));
-      if (res.letras.length === 0) return;
-      const row = placeLettersRow(
-        res.letras.map((l) => ({
-          letraChar: l.letraChar,
-          elementId: l.elementId,
-          shape: { hitbox: l.hitbox, anchoMm: l.anchoMm, altoMm: l.altoMm },
-        })),
-        store.instances,
-        shapes,
-        geometry,
-      );
-      if (row.length === 0) {
-        showToast(t('toasts.E06'), 'error');
+  // ---------- anadir (SS7.5) ----------
+  const addElement = useCallback(
+    (el: CatalogElement) => {
+      if (!device || !sceneCtx) return;
+      if (replacingId) {
+        // Sustitucion de caducado (SS7.8): misma pose y, si no cabe, busqueda
+        const target = store.items.find((i) => i.instanceId === replacingId);
+        if (!target) return;
+        const others = store.items.filter((i) => i.instanceId !== replacingId);
+        const samePose: PlacedItem = { ...target, elementId: el.id, letterChar: el.letraChar ?? undefined };
+        const allShapes = new Map(shapes);
+        allShapes.set(el.id, { hitbox: el.hitbox, anchoMm: el.anchoMm, altoMm: el.altoMm });
+        if (esValida(samePose, others, allShapes, sceneCtx).valida) {
+          store.replaceItem(replacingId, { ...samePose, instanceId: newInstanceId() });
+        } else {
+          const spot = findFreeSpot(el.id, allShapes.get(el.id)!, others, allShapes, device);
+          if (!spot) {
+            showToast(t('toasts.T06'), 'error');
+            return;
+          }
+          store.replaceItem(replacingId, {
+            instanceId: newInstanceId(), elementId: el.id, xMm: spot.x, yMm: spot.y,
+            rotationDeg: spot.rotationDeg, letterChar: el.letraChar ?? undefined,
+          });
+        }
+        setExpiredIds((prev) => {
+          const next = new Set(prev);
+          const stillUsed = useEditorStore.getState().items.some((i) => i.elementId === target.elementId);
+          if (!stillUsed) next.delete(target.elementId);
+          return next;
+        });
+        setReplacingId(null);
         return;
       }
-      if (row.length < res.letras.length) showToast(t('toasts.E07'));
-      // Un lote = una entrada de historial (§6.8, caso §18.15)
-      store.addBatch(
-        row.map((l) => ({
-          instanceId: newInstanceId(),
-          elementId: l.elementId,
-          xMm: l.xMm,
-          yMm: l.yMm,
-          rotacionGrados: 0,
-          letraChar: l.letraChar,
-        })),
-      );
-      setLettersText('');
-    } catch {
-      showToast(t('toasts.E15'), 'error');
-    }
-  };
+      const doAdd = () => {
+        const shape: ElementShape = { hitbox: el.hitbox, anchoMm: el.anchoMm, altoMm: el.altoMm };
+        const all = new Map(shapes);
+        all.set(el.id, shape);
+        const spot = findFreeSpot(el.id, shape, store.items, all, device);
+        if (!spot) {
+          showToast(t('toasts.T06'), 'error');
+          return;
+        }
+        store.addItem({
+          instanceId: newInstanceId(), elementId: el.id, xMm: spot.x, yMm: spot.y,
+          rotationDeg: spot.rotationDeg, letterChar: el.letraChar ?? undefined,
+        });
+      };
+      if (!backFacing) {
+        // Reencuadre y despues anadir (SS7.5)
+        pendingAddRef.current = el;
+        setSnapTarget('trasera');
+        return;
+      }
+      doAdd();
+    },
+    [device, sceneCtx, replacingId, store, shapes, backFacing, showToast, t],
+  );
 
-  // ---------- Gestos sobre el visor (§6.4) ----------
-  const onElementPointerDown = (instanceId: string, e: ThreeEvent<PointerEvent>) => {
-    if (!viewAllowsPlacement(view)) return;
-    const inst = store.instances.find((i) => i.instanceId === instanceId);
-    if (!inst) return;
+  const onSnapReached = useCallback(() => {
+    setSnapTarget(null);
+    const pending = pendingAddRef.current;
+    if (pending) {
+      pendingAddRef.current = null;
+      addElement(pending);
+    }
+  }, [addElement]);
+
+  // ---------- gestos: matriz SS7.4 ----------
+  const onItemPointerDown = (instanceId: string, e: ThreeEvent<PointerEvent>) => {
+    const item = store.items.find((i) => i.instanceId === instanceId);
+    if (!item) return;
     store.select(instanceId);
-    if (expiredIds.has(inst.elementId)) return; // caducados: solo sustituir/eliminar (§4.5)
+    if (expiredIds.has(item.elementId)) return; // caducados: sin drag (SS7.8)
+    if (controlsRef.current) controlsRef.current.enabled = false; // regla: camara bloqueada
     store.beginGesture();
     dragRef.current = {
-      instanceId,
+      id: instanceId,
       pointerId: e.pointerId,
-      isNew: false,
-      hadValid: true,
-      lastValid: { xMm: inst.xMm, yMm: inst.yMm, rotacionGrados: inst.rotacionGrados },
+      startX: e.nativeEvent.clientX,
+      startY: e.nativeEvent.clientY,
       moved: false,
       isTouch: e.nativeEvent.pointerType === 'touch',
+      lastValid: { xMm: item.xMm, yMm: item.yMm, rotationDeg: item.rotationDeg },
+      hadValid: true,
+      isGhost: false,
     };
   };
 
+  const mmPerPx = useCallback((): number => {
+    const el = viewerRef.current;
+    if (!el || !device) return 0.3;
+    return (device.altoMm * 1.6) / el.clientHeight;
+  }, [device]);
+
+  const applyMagnet = useCallback(
+    (item: PlacedItem, x: number, y: number): { x: number; y: number } => {
+      if (!device) return { x, y };
+      const g: { v?: number | null; h?: number | null } = {};
+      let nx = x;
+      let ny = y;
+      const centerX = device.anchoMm / 2;
+      const centerY = device.altoMm / 2;
+      // Iman SOLO de posicion, radio 1,5 mm (SS7.7); jamas de rotacion
+      if (Math.abs(nx - centerX) < 1.5) {
+        nx = centerX;
+        g.v = centerX;
+      }
+      if (Math.abs(ny - centerY) < 1.5) {
+        ny = centerY;
+        g.h = centerY;
+      }
+      for (const other of store.items) {
+        if (other.instanceId === item.instanceId) continue;
+        if (g.v === undefined && Math.abs(nx - other.xMm) < 1.5) {
+          nx = other.xMm;
+          g.v = other.xMm;
+        }
+        if (g.h === undefined && Math.abs(ny - other.yMm) < 1.5) {
+          ny = other.yMm;
+          g.h = other.yMm;
+        }
+      }
+      setGuides(g);
+      return { x: nx, y: ny };
+    },
+    [device, store.items],
+  );
+
   const onPlanePointerMove = (xMm: number, yMm: number, e: ThreeEvent<PointerEvent>) => {
     const drag = dragRef.current;
-    if (!drag || twistRef.current || e.pointerId !== drag.pointerId || !geometry) return;
+    if (!drag || twistRef.current) return;
+    if (e.pointerId !== drag.pointerId) return;
+    const dx = e.nativeEvent.clientX - drag.startX;
+    const dy = e.nativeEvent.clientY - drag.startY;
+    if (!drag.moved && Math.hypot(dx, dy) < 6) return; // umbral tap/drag (SS7.4)
     drag.moved = true;
-    // Offset táctil: el elemento va ~48 px por encima del dedo (§6.4)
+    store.setStatus('dragging');
     let y = yMm;
-    if (drag.isTouch && viewerRef.current) {
-      const pxToMm = geometry.altoMm / viewerRef.current.clientHeight;
-      y = yMm - 48 * pxToMm * 0.6;
-    }
-    // Imán suave SOLO de posición, radio 1,5 mm, jamás de rotación (§6.6)
-    const centerX = geometry.anchoMm / 2;
-    const centerY = geometry.altoMm / 2;
-    let x = xMm;
-    const g: { v?: number | null; h?: number | null } = {};
-    if (Math.abs(x - centerX) < 1.5) {
-      x = centerX;
-      g.v = centerX;
-    }
-    if (Math.abs(y - centerY) < 1.5) {
-      y = centerY;
-      g.h = centerY;
-    }
-    setGuides(g);
-    store.updateInstanceLive(drag.instanceId, { xMm: x, yMm: y });
-    const inst = store.instances.find((i) => i.instanceId === drag.instanceId);
-    if (inst) {
-      const valid = validate({ ...inst, xMm: x, yMm: y });
-      if (valid) drag.lastValid = { xMm: x, yMm: y, rotacionGrados: inst.rotacionGrados };
-      drag.hadValid = drag.hadValid || valid;
+    if (drag.isTouch) y -= 48 * mmPerPx(); // offset tactil 48 px (SS7.6)
+    const isGhostItem = ghost?.instanceId === drag.id;
+    const current = isGhostItem ? ghost : store.items.find((i) => i.instanceId === drag.id);
+    if (!current) return;
+    const snapped = applyMagnet(current, xMm, y);
+    const updated = { ...current, xMm: snapped.x, yMm: snapped.y };
+    if (isGhostItem) setGhost(updated);
+    else store.updateItemLive(drag.id, { xMm: snapped.x, yMm: snapped.y });
+    const valid = validateLive(updated, isGhostItem);
+    if (valid) drag.lastValid = { xMm: snapped.x, yMm: snapped.y, rotationDeg: updated.rotationDeg };
+    drag.hadValid = drag.hadValid || valid;
+    // Zona de papelera (SS7.6)
+    const trashEl = document.getElementById('cc-trash-zone');
+    if (trashEl) {
+      const r = trashEl.getBoundingClientRect();
+      const inside =
+        e.nativeEvent.clientX >= r.left - 10 && e.nativeEvent.clientX <= r.right + 10 &&
+        e.nativeEvent.clientY >= r.top - 10 && e.nativeEvent.clientY <= r.bottom + 10;
+      setTrashActive(inside);
     }
   };
 
-  const endDrag = useCallback(() => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    dragRef.current = null;
-    setGuides({});
-    const inst = useEditorStore.getState().instances.find((i) => i.instanceId === drag.instanceId);
-    if (!inst || !geometry) {
-      setLiveInvalid(new Map());
-      return;
-    }
-    const others = useEditorStore.getState().instances.filter((i) => i.instanceId !== drag.instanceId);
-    const valid = validatePlacement(inst, others, shapes, geometry, DEFAULT_SAFETY_MARGIN_MM).valid;
-    if (!valid) {
-      showToast(t('toasts.E05'), 'error');
-      if (drag.isNew && !drag.hadValid) {
-        // Recién añadido sin posición válida previa: desaparece (§6.6)
+  const endDrag = useCallback(
+    (cancelled = false) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      dragRef.current = null;
+      setGuides({});
+      if (controlsRef.current) controlsRef.current.enabled = true;
+      store.setStatus(hasExpired ? 'resolving-expired' : 'ready');
+      const wasTrash = trashActive;
+      setTrashActive(false);
+
+      const isGhostItem = ghost?.instanceId === drag.id;
+      if (isGhostItem) {
+        const g = ghost;
+        setGhost(null);
+        setLiveStates(new Map());
+        if (cancelled || !g) return;
+        if (wasTrash) return;
+        if (!sceneCtx) return;
+        const valid = esValida(g, store.items, shapes, sceneCtx).valida;
+        if (!valid) {
+          showToast(t('toasts.T05'), 'error');
+          return;
+        }
+        store.addItem({ ...g, instanceId: newInstanceId() });
+        return;
+      }
+
+      const item = useEditorStore.getState().items.find((i) => i.instanceId === drag.id);
+      if (!item || !sceneCtx) {
+        setLiveStates(new Map());
         store.cancelGesture();
-        store.removeInstance(drag.instanceId);
+        return;
+      }
+      if (cancelled) {
+        // pointercancel: reversion silenciosa (SS7.4)
+        store.cancelGesture();
+        setLiveStates(new Map());
+        return;
+      }
+      if (wasTrash && drag.moved) {
+        store.cancelGesture();
+        store.removeItem(drag.id);
+        setLiveStates(new Map());
+        return;
+      }
+      if (!drag.moved) {
+        store.cancelGesture(); // tap: solo seleccion (regla 2)
+        setLiveStates(new Map());
+        return;
+      }
+      const others = useEditorStore.getState().items.filter((i) => i.instanceId !== drag.id);
+      const valid = esValida(item, others, shapes, sceneCtx).valida;
+      if (!valid) {
+        showToast(t('toasts.T05'), 'error');
+        store.updateItemLive(drag.id, drag.lastValid);
+        store.commitGesture();
       } else {
-        // Vuelve a la última posición/rotación válidas (§6.6)
-        store.updateInstanceLive(drag.instanceId, drag.lastValid);
         store.commitGesture();
       }
-    } else if (drag.moved) {
-      store.commitGesture();
-    } else {
-      store.cancelGesture();
-    }
-    setLiveInvalid(new Map());
-  }, [geometry, shapes, showToast, store, t]);
+      setLiveStates(new Map());
+    },
+    [store, sceneCtx, shapes, ghost, trashActive, hasExpired, showToast, t],
+  );
 
-  // Twist de dos dedos = rotación libre; el componente de escala se IGNORA (§6.4)
+  // Rotacion por gesto de dos dedos / asa; doble tap reencuadra
   useEffect(() => {
     const el = viewerRef.current;
     if (!el) return;
 
-    const getAngle = (touches: TouchList) => {
+    const angleOf = (touches: TouchList) => {
       const a = touches[0]!;
       const b = touches[1]!;
       return (Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180) / Math.PI;
     };
-    const getDist = (touches: TouchList) => {
-      const a = touches[0]!;
-      const b = touches[1]!;
-      return Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
-    };
 
     const onTouchStart = (ev: TouchEvent) => {
       if (ev.touches.length === 2) {
-        const selected = useEditorStore.getState().selectedId;
-        const dragging = dragRef.current;
-        if ((dragging || selected) && viewAllowsPlacement(view)) {
-          // Pinch/twist sobre elemento seleccionado → SIEMPRE rotación (caso §18.12)
-          const id = dragging?.instanceId ?? selected!;
-          const inst = useEditorStore.getState().instances.find((i) => i.instanceId === id);
-          if (inst && !expiredIds.has(inst.elementId)) {
+        const drag = dragRef.current;
+        const selected = drag?.id ?? useEditorStore.getState().selectedId;
+        if (drag) {
+          // Regla 10: un dedo extra durante drag se ignora
+          return;
+        }
+        if (selected) {
+          const item = useEditorStore.getState().items.find((i) => i.instanceId === selected);
+          if (item && !expiredIds.has(item.elementId)) {
+            // Regla 5: dos dedos sobre elemento seleccionado = rotacion
+            if (controlsRef.current) controlsRef.current.enabled = false;
             store.beginGesture();
-            twistRef.current = {
-              instanceId: id,
-              startAngle: getAngle(ev.touches),
-              startRotation: inst.rotacionGrados,
-            };
-            return;
+            store.setStatus('rotating-item');
+            twistRef.current = { id: selected, startAngle: angleOf(ev.touches), startRot: item.rotationDeg };
           }
         }
-        // Pinch en zona vacía → zoom 0.8–1.6 (caso §18.13)
-        pinchRef.current = { startDist: getDist(ev.touches), startZoom: zoom };
-      } else if (ev.touches.length === 1) {
-        const touch = ev.touches[0]!;
-        swipeRef.current = { x: touch.clientX, y: touch.clientY, onEmpty: !dragRef.current };
-        // Doble tap en zona vacía → reset de zoom
+      } else if (ev.touches.length === 1 && !dragRef.current) {
         const now = Date.now();
-        if (now - lastTapRef.current < 300 && !dragRef.current) {
-          setZoom(1);
-        }
+        if (now - lastTapRef.current < 300) setSnapTarget('trasera'); // doble tap (SS7.3)
         lastTapRef.current = now;
       }
     };
 
     const onTouchMove = (ev: TouchEvent) => {
-      if (ev.touches.length === 2 && twistRef.current) {
-        const tw = twistRef.current;
-        const delta = getAngle(ev.touches) - tw.startAngle;
-        let rot = (tw.startRotation + delta) % 360;
+      const tw = twistRef.current;
+      if (tw && ev.touches.length === 2) {
+        ev.preventDefault();
+        const delta = angleOf(ev.touches) - tw.startAngle;
+        let rot = (tw.startRot + delta) % 360;
         if (rot < 0) rot += 360;
-        store.updateInstanceLive(tw.instanceId, { rotacionGrados: rot });
-        const inst = useEditorStore.getState().instances.find((i) => i.instanceId === tw.instanceId);
-        if (inst) validate({ ...inst, rotacionGrados: rot });
-        ev.preventDefault();
-      } else if (ev.touches.length === 2 && pinchRef.current) {
-        const p = pinchRef.current;
-        const ratio = getDist(ev.touches) / p.startDist;
-        setZoom(Math.min(1.6, Math.max(0.8, p.startZoom * ratio)));
-        ev.preventDefault();
+        store.updateItemLive(tw.id, { rotationDeg: rot });
+        setRotationTooltip(Math.round(rot));
+        const item = useEditorStore.getState().items.find((i) => i.instanceId === tw.id);
+        if (item) validateLive({ ...item, rotationDeg: rot });
       }
     };
 
     const onTouchEnd = (ev: TouchEvent) => {
-      if (twistRef.current && ev.touches.length < 2) {
-        const tw = twistRef.current;
+      const tw = twistRef.current;
+      if (tw && ev.touches.length < 2) {
         twistRef.current = null;
+        setRotationTooltip(null);
+        if (controlsRef.current) controlsRef.current.enabled = true;
+        store.setStatus(hasExpired ? 'resolving-expired' : 'ready');
         const state = useEditorStore.getState();
-        const inst = state.instances.find((i) => i.instanceId === tw.instanceId);
-        if (inst && geometry) {
-          const others = state.instances.filter((i) => i.instanceId !== tw.instanceId);
-          const valid = validatePlacement(inst, others, shapes, geometry, DEFAULT_SAFETY_MARGIN_MM).valid;
-          if (!valid) {
-            // Rotar hasta colisión: al soltar revierte + E-05 (caso §18.3)
-            showToast(t('toasts.E05'), 'error');
-            store.cancelGesture();
-          } else if (!dragRef.current) {
+        const item = state.items.find((i) => i.instanceId === tw.id);
+        if (item && sceneCtx) {
+          const others = state.items.filter((i) => i.instanceId !== tw.id);
+          if (!esValida(item, others, shapes, sceneCtx).valida) {
+            showToast(t('toasts.T05'), 'error');
+            store.cancelGesture(); // reversion de rotacion (SS26.3)
+          } else {
             store.commitGesture();
           }
         }
-        setLiveInvalid(new Map());
-      }
-      if (pinchRef.current && ev.touches.length < 2) pinchRef.current = null;
-      // Swipe horizontal en zona vacía → cambio de vista (§6.2, caso §18.14)
-      if (swipeRef.current && ev.touches.length === 0 && !dragRef.current) {
-        const sw = swipeRef.current;
-        swipeRef.current = null;
-        const touch = ev.changedTouches[0];
-        if (touch && sw.onEmpty) {
-          const dx = touch.clientX - sw.x;
-          const dy = touch.clientY - sw.y;
-          if (Math.abs(dx) > 60 && Math.abs(dy) < 40) {
-            const idx = VIEWS.indexOf(view);
-            const next = dx < 0 ? Math.min(idx + 1, VIEWS.length - 1) : Math.max(idx - 1, 0);
-            setView(VIEWS[next]!);
-          }
-        }
+        setLiveStates(new Map());
       }
     };
 
-    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    const onDblClick = () => {
+      if (!dragRef.current) setSnapTarget('trasera');
+    };
+
+    const onPointerUp = () => endDrag(false);
+    const onPointerCancel = () => endDrag(true);
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
     el.addEventListener('touchmove', onTouchMove, { passive: false });
     el.addEventListener('touchend', onTouchEnd);
-    window.addEventListener('pointerup', endDrag);
+    el.addEventListener('dblclick', onDblClick);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
     return () => {
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
       el.removeEventListener('touchend', onTouchEnd);
-      window.removeEventListener('pointerup', endDrag);
+      el.removeEventListener('dblclick', onDblClick);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
     };
-  }, [view, zoom, geometry, shapes, expiredIds, endDrag, store, validate, showToast, t]);
+  }, [endDrag, expiredIds, sceneCtx, shapes, store, validateLive, hasExpired, showToast, t]);
 
-  // Teclado (§15): flechas 1 mm, Shift 5 mm, R+flechas rota, Supr elimina, Ctrl+Z/Y
+  // Teclado (SS21)
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
-      if ((ev.target as HTMLElement | null)?.tagName === 'INPUT') return;
+      const tag = (ev.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') {
         ev.preventDefault();
         if (ev.shiftKey) store.redo();
         else store.undo();
         return;
       }
+      if (ev.key === 'Escape') {
+        store.select(null);
+        return;
+      }
+      if (ev.key === 'Tab') {
+        const items = store.items;
+        if (items.length > 0) {
+          ev.preventDefault();
+          const idx = items.findIndex((i) => i.instanceId === store.selectedId);
+          store.select(items[(idx + 1) % items.length]!.instanceId);
+        }
+        return;
+      }
       const selected = store.selectedId;
       if (!selected) return;
-      const inst = store.instances.find((i) => i.instanceId === selected);
-      if (!inst || !geometry) return;
+      const item = store.items.find((i) => i.instanceId === selected);
+      if (!item || !sceneCtx) return;
       if (ev.key === 'Delete' || ev.key === 'Backspace') {
-        store.removeInstance(selected);
+        store.removeItem(selected);
+        return;
+      }
+      if (ev.key.toLowerCase() === 'r') {
+        const delta = ev.shiftKey ? -1 : 1;
+        let rot = (item.rotationDeg + delta) % 360;
+        if (rot < 0) rot += 360;
+        tryPose({ ...item, rotationDeg: rot });
         return;
       }
       const step = ev.shiftKey ? 5 : 1;
-      let patch: Partial<ElementInstance> | null = null;
-      if (ev.key === 'ArrowUp') patch = { yMm: inst.yMm - step };
-      if (ev.key === 'ArrowDown') patch = { yMm: inst.yMm + step };
-      if (ev.key === 'ArrowLeft') patch = { xMm: inst.xMm - step };
-      if (ev.key === 'ArrowRight') patch = { xMm: inst.xMm + step };
+      let patch: Partial<PlacedItem> | null = null;
+      if (ev.key === 'ArrowUp') patch = { yMm: item.yMm - step };
+      if (ev.key === 'ArrowDown') patch = { yMm: item.yMm + step };
+      if (ev.key === 'ArrowLeft') patch = { xMm: item.xMm - step };
+      if (ev.key === 'ArrowRight') patch = { xMm: item.xMm + step };
       if (patch) {
         ev.preventDefault();
-        const candidate = { ...inst, ...patch };
-        const others = store.instances.filter((i) => i.instanceId !== selected);
-        if (validatePlacement(candidate, others, shapes, geometry, DEFAULT_SAFETY_MARGIN_MM).valid) {
-          store.beginGesture();
-          store.updateInstanceLive(selected, patch);
-          store.commitGesture();
-        }
+        tryPose({ ...item, ...patch });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [store, geometry, shapes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, sceneCtx, shapes]);
 
-  // ---------- Acciones del panel contextual (§6.4 accesible) ----------
-  const nudge = (dx: number, dy: number) => {
-    const selected = store.selectedId;
-    const inst = store.instances.find((i) => i.instanceId === selected);
-    if (!inst || !geometry || !selected) return;
-    const candidate = { ...inst, xMm: inst.xMm + dx, yMm: inst.yMm + dy };
-    const others = store.instances.filter((i) => i.instanceId !== selected);
-    if (validatePlacement(candidate, others, shapes, geometry, DEFAULT_SAFETY_MARGIN_MM).valid) {
+  const tryPose = useCallback(
+    (candidate: PlacedItem): boolean => {
+      if (!sceneCtx) return false;
+      const others = store.items.filter((i) => i.instanceId !== candidate.instanceId);
+      if (!esValida(candidate, others, shapes, sceneCtx).valida) return false;
       store.beginGesture();
-      store.updateInstanceLive(selected, { xMm: candidate.xMm, yMm: candidate.yMm });
+      store.updateItemLive(candidate.instanceId, {
+        xMm: candidate.xMm, yMm: candidate.yMm, rotationDeg: candidate.rotationDeg,
+      });
       store.commitGesture();
-    }
+      return true;
+    },
+    [sceneCtx, store, shapes],
+  );
+
+  // ---------- acciones del panel contextual (SS7.6) ----------
+  const selected = store.items.find((i) => i.instanceId === store.selectedId) ?? null;
+  const selectedElement = selected ? (catalog.get(selected.elementId) ?? null) : null;
+  const selectedExpired = selected ? expiredIds.has(selected.elementId) : false;
+
+  const nudge = (dx: number, dy: number) => {
+    if (!selected) return;
+    tryPose({ ...selected, xMm: selected.xMm + dx, yMm: selected.yMm + dy });
   };
 
   const rotateTo = (deg: number) => {
-    const selected = store.selectedId;
-    const inst = store.instances.find((i) => i.instanceId === selected);
-    if (!inst || !geometry || !selected) return;
+    if (!selected) return;
     let rot = deg % 360;
     if (rot < 0) rot += 360;
-    const candidate = { ...inst, rotacionGrados: rot };
-    const others = store.instances.filter((i) => i.instanceId !== selected);
-    if (validatePlacement(candidate, others, shapes, geometry, DEFAULT_SAFETY_MARGIN_MM).valid) {
-      store.beginGesture();
-      store.updateInstanceLive(selected, { rotacionGrados: rot });
-      store.commitGesture();
-    } else {
-      showToast(t('toasts.E05'), 'error');
-    }
+    if (!tryPose({ ...selected, rotationDeg: rot })) showToast(t('toasts.T05'), 'error');
   };
 
-  /** Botón Centrar (§6.6): eje X; si está ocupado, posición centrada válida más cercana. */
   const centerSelected = () => {
-    const selected = store.selectedId;
-    const inst = store.instances.find((i) => i.instanceId === selected);
-    if (!inst || !geometry || !selected) return;
-    const shape = shapes.get(inst.elementId);
-    if (!shape) return;
-    const others = store.instances.filter((i) => i.instanceId !== selected);
-    const centerX = geometry.anchoMm / 2;
-    const direct = { ...inst, xMm: centerX };
-    if (validatePlacement(direct, others, shapes, geometry, DEFAULT_SAFETY_MARGIN_MM).valid) {
-      store.beginGesture();
-      store.updateInstanceLive(selected, { xMm: centerX });
-      store.commitGesture();
-      return;
-    }
-    const spot = findFreeSpot(inst.elementId, shape, others, shapes, geometry, DEFAULT_SAFETY_MARGIN_MM, {
-      x: centerX,
-      y: inst.yMm,
-    });
-    if (spot) {
-      store.beginGesture();
-      store.updateInstanceLive(selected, { xMm: spot.x, yMm: spot.y });
-      store.commitGesture();
-    } else {
-      showToast(t('toasts.E06'), 'error');
+    if (!selected || !device || !selectedElement) return;
+    const centerX = device.anchoMm / 2;
+    if (tryPose({ ...selected, xMm: centerX })) return;
+    const others = store.items.filter((i) => i.instanceId !== selected.instanceId);
+    const spot = findFreeSpot(
+      selected.elementId,
+      { hitbox: selectedElement.hitbox, anchoMm: selectedElement.anchoMm, altoMm: selectedElement.altoMm },
+      others, shapes, device, undefined, { x: centerX, y: selected.yMm },
+    );
+    if (spot) tryPose({ ...selected, xMm: spot.x, yMm: spot.y, rotationDeg: selected.rotationDeg });
+    else showToast(t('toasts.T06'), 'error');
+  };
+
+  // ---------- letras (SS11.5) ----------
+  const [lettersText, setLettersText] = useState('');
+  const [lettersJuego, setLettersJuego] = useState<'letras-oro' | 'letras-sticker'>('letras-oro');
+  const createLetters = async () => {
+    if (!device || lettersText.trim() === '') return;
+    try {
+      const res = await api<{
+        letras: { elementId: string; char: string; anchoMm: number; altoMm: number; precioCentimos: number; hitbox: ElementShape['hitbox'] }[];
+        filtrados: number;
+      }>('/api/letters/expand', {
+        method: 'POST',
+        body: JSON.stringify({ texto: lettersText, juego: lettersJuego }),
+      });
+      if (res.filtrados > 0) showToast(t('toasts.T08'));
+      if (res.letras.length === 0) return;
+      const row = placeLettersRow(
+        res.letras.map((l) => ({
+          letterChar: l.char, elementId: l.elementId,
+          shape: { hitbox: l.hitbox, anchoMm: l.anchoMm, altoMm: l.altoMm },
+        })),
+        store.items, shapes, device,
+      );
+      if (row.length === 0) {
+        showToast(t('toasts.T06'), 'error');
+        return;
+      }
+      if (row.length < res.letras.length) showToast(t('toasts.T07'));
+      store.addBatch(
+        row.map((l) => ({
+          instanceId: newInstanceId(), elementId: l.elementId, xMm: l.xMm, yMm: l.yMm,
+          rotationDeg: 0, letterChar: l.letterChar,
+        })),
+      );
+      setLettersText('');
+    } catch (e) {
+      if (e instanceof ApiClientError && e.code === 'LETTERS_EMPTY') showToast(t('toasts.T08'), 'error');
+      else showToast(t('toasts.T15'), 'error');
     }
   };
 
-  // ---------- Guardar (§6.9) ----------
-  const doSave = async (): Promise<string | null> => {
-    if (!store.deviceId || !store.caseVariantId) return null;
-    if (hasExpired) {
-      showToast(t('toasts.E10'), 'error');
-      return null;
-    }
-    if (status !== 'authenticated') {
-      // Marcar guardado pendiente y llevar al auth (§5.7)
+  // ---------- guardado (SS7.10) ----------
+  const doSave = async (asCopy = false): Promise<string | null> => {
+    const s = useEditorStore.getState();
+    if (!s.deviceId || !s.variantId) return null;
+    if (authStatus !== 'authenticated') {
       writeDraftDebounced({
-        designId: store.designId,
-        nombre: store.nombre,
-        deviceId: store.deviceId,
-        caseVariantId: store.caseVariantId,
-        instances: store.instances,
-        pendingSave: true,
-        updatedAt: Date.now(),
+        designId: s.designId, nombre: s.nombre, deviceId: s.deviceId, variantId: s.variantId,
+        items: s.items, pendingSave: true, updatedAt: Date.now(),
       });
       setAuthPrompt(true);
       return null;
     }
     setSaving(true);
+    store.setStatus('saving');
     try {
       const payload = {
-        nombre: store.nombre,
-        deviceId: store.deviceId,
-        caseVariantId: store.caseVariantId,
-        elementos: store.instances,
+        nombre: s.nombre, deviceId: s.deviceId, caseVariantId: s.variantId,
+        elementos: s.items, updatedAt: s.serverUpdatedAt ?? undefined,
       };
-      const wasFirstSave = !store.designId;
-      const design = store.designId
-        ? await api<{ id: string }>(`/api/designs/${store.designId}`, {
-            method: 'PUT',
-            body: JSON.stringify(payload),
-          })
-        : await api<{ id: string }>('/api/designs', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          });
-      store.setDesignId(design.id);
-      store.markSaved();
+      const design =
+        s.designId && !asCopy
+          ? await api<{ id: string; updatedAt: string }>(`/api/designs/${s.designId}`, {
+              method: 'PUT', body: JSON.stringify(payload),
+            })
+          : await api<{ id: string; updatedAt: string }>('/api/designs', {
+              method: 'POST', body: JSON.stringify(payload),
+            });
+      store.setSaved(design.id, design.updatedAt);
       clearDraft();
-      // Miniatura: captura del canvas en vista trasera (§6.9)
-      const canvas = viewerRef.current?.querySelector('canvas');
-      if (canvas) {
-        try {
-          const imageBase64 = await captureThumbnail(canvas);
-          await api(`/api/designs/${design.id}/thumbnail`, {
-            method: 'POST',
-            body: JSON.stringify({ imageBase64 }),
-          });
-        } catch {
-          // la miniatura es best-effort
-        }
-      }
-      if (wasFirstSave) setConfetti((c) => c + 1);
-      showToast(t('toasts.E01'), 'success');
+      void uploadThumbnail(design.id);
+      showToast(t('toasts.T01'), 'success');
       return design.id;
     } catch (e) {
-      if (e instanceof ApiClientError && e.code === 'S-01') showToast(t('errores.S01'), 'error');
-      else if (e instanceof ApiClientError && e.code === 'S-02') showToast(t('errores.S02'), 'error');
-      else showToast(t('toasts.E15'), 'error');
+      if (e instanceof ApiClientError && e.code === 'DESIGN_CONFLICT') {
+        setConflict({ serverUpdatedAt: (e.detail as { updatedAt?: string } | undefined)?.updatedAt ?? '' });
+      } else if (e instanceof ApiClientError && e.code.startsWith('DESIGN_')) {
+        showToast(t('toasts.T05'), 'error');
+      } else {
+        showToast(t('toasts.T15'), 'error');
+      }
       return null;
     } finally {
       setSaving(false);
+      store.setStatus(hasExpired ? 'resolving-expired' : 'ready');
+    }
+  };
+
+  const uploadThumbnail = async (id: string) => {
+    try {
+      // Vista trasera pura para la captura (SS7.10)
+      setSnapTarget('trasera');
+      await new Promise((r) => setTimeout(r, 500));
+      const canvas = viewerRef.current?.querySelector('canvas');
+      if (!canvas) return;
+      const blob = await captureThumbnail(canvas);
+      const { uploadUrl, publicUrl } = await api<{ uploadUrl: string; publicUrl: string }>(
+        `/api/designs/${id}/thumbnail-url`, { method: 'POST' },
+      );
+      await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'image/webp' }, body: blob });
+      await api(`/api/designs/${id}/thumbnail-confirm`, {
+        method: 'POST', body: JSON.stringify({ publicUrl }),
+      });
+    } catch {
+      // best-effort
     }
   };
 
   const addToCart = async () => {
     if (hasExpired) {
-      showToast(t('toasts.E10'), 'error');
+      showToast(t('toasts.T10'), 'error');
       return;
     }
     let id = store.designId;
@@ -769,85 +865,78 @@ export function Editor({ designId }: { designId?: string }) {
     if (!id) return;
     try {
       await api('/api/cart', { method: 'POST', body: JSON.stringify({ designId: id }) });
-      setConfetti((c) => c + 1);
-      showToast(t('toasts.E02'), 'success');
+      showToast(t('toasts.T02'), 'success');
     } catch {
-      showToast(t('toasts.E15'), 'error');
+      showToast(t('toasts.T15'), 'error');
     }
   };
 
-  const shareStory = async () => {
-    const canvas = viewerRef.current?.querySelector('canvas');
-    if (!canvas) return;
-    // Vista más lucida para stories: esquina-sup (§8.1)
-    setView('esquina-sup');
-    await new Promise((r) => setTimeout(r, 600));
-    try {
-      const blob = await composeStoryImage(canvas, store.nombre);
-      await shareOrDownload(blob, `${store.nombre.replace(/\s+/g, '-').toLowerCase()}.webp`);
-    } catch {
-      showToast(t('toasts.E15'), 'error');
-    } finally {
-      setView('trasera');
-    }
-  };
-
-  const shareGiftLink = async () => {
+  const shareLink = async () => {
     let id = store.designId;
     if (!id || store.dirty) id = await doSave();
     if (!id) return;
     try {
-      const design = await api<{ shareToken: string }>(`/api/designs/${id}`);
-      const url = `${window.location.origin}/d/${design.shareToken}`;
-      await navigator.clipboard.writeText(url);
-      showToast(t('toasts.E03'), 'success');
+      const d = await api<{ shareToken: string }>(`/api/designs/${id}`);
+      await navigator.clipboard.writeText(`${window.location.origin}/d/${d.shareToken}`);
+      showToast(t('toasts.T03'), 'success');
     } catch {
-      showToast(t('toasts.E15'), 'error');
+      showToast(t('toasts.T15'), 'error');
     }
   };
 
-  // ---------- Render ----------
+  const shareImage = async () => {
+    const canvas = viewerRef.current?.querySelector('canvas');
+    if (!canvas) return;
+    setSnapTarget(null);
+    // Vista tres cuartos para la imagen (SS16.1)
+    if (controlsRef.current) {
+      controlsRef.current.setAzimuthalAngle(35 * DEG);
+      controlsRef.current.setPolarAngle(80 * DEG);
+      controlsRef.current.update();
+    }
+    await new Promise((r) => setTimeout(r, 350));
+    const { composeShareImage, shareOrDownload } = await import('./shareImage');
+    try {
+      const blob = await composeShareImage(canvas, store.nombre);
+      await shareOrDownload(blob, `${store.nombre.replace(/\s+/g, '-').toLowerCase()}.webp`);
+    } catch {
+      showToast(t('toasts.T15'), 'error');
+    }
+  };
+
+  // ---------- render ----------
   if (!webgl) {
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center">
-        <span className="text-6xl">🥺</span>
-        <p className="max-w-sm font-display text-lg font-semibold">{t('editor.sinWebgl')}</p>
+        <p className="max-w-sm text-[15px] font-medium">{t('toasts.T14')}</p>
+        <img src="/renders/cases/silicona-soft.webp" alt="" className="w-40 rounded-card" />
       </div>
     );
   }
 
-  const selected = store.instances.find((i) => i.instanceId === store.selectedId) ?? null;
-  const selectedExpired = selected ? expiredIds.has(selected.elementId) : false;
-  const placementAllowed = viewAllowsPlacement(view);
-
+  const loading = store.status === 'loading-assets';
   const categoryTabs = [
-    ...CATEGORIES.map((c) => ({ id: c, label: t(`editor.categorias.${c}`) })),
-    ...(elementsData?.temporada
-      ? [{ id: 'temporada', label: `${t('editor.categorias.temporada')} ${elementsData.temporada.emoji}` }]
-      : []),
+    ...CATEGORY_ORDER.map((c) => ({ id: c, label: t(`editor.categorias.${c}`) })),
+    ...(elementsData?.temporada ? [{ id: 'temporada', label: `${t('editor.categorias.temporada')}: ${elementsData.temporada.nombre}` }] : []),
   ];
   const tabElements = elementsData?.porCategoria[activeTab] ?? [];
-
-  // El bottom sheet es fixed: reservar su altura para no tapar las acciones (§6.1)
-  const sheetPad = { collapsed: '76px', half: '240px', expanded: '70dvh' }[sheetPos];
+  const viewerItems = ghost ? [...store.items, ghost] : store.items;
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-pink-100" style={{ paddingBottom: sheetPad }}>
-      <Confetti trigger={confetti} />
-
-      {/* Barra superior (§6.1) */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2">
+    <div className="flex h-dvh flex-col overflow-hidden bg-bg" style={{ paddingBottom: SHEET_HEIGHTS_PX[sheetPos] }}>
+      {/* Barra superior (SS7.1) */}
+      <div className="flex h-14 items-center justify-between gap-2 border-b border-border bg-surface px-2">
         <button
           type="button"
           aria-label={t('common.nav.volver')}
           onClick={() => router.back()}
-          className="flex h-11 w-11 items-center justify-center rounded-pill text-pink-700 hover:bg-pink-200"
+          className="flex h-11 w-11 items-center justify-center rounded-control text-text-soft transition-colors hover:bg-surface-2"
         >
-          <ArrowLeft size={22} />
+          <ArrowLeft size={20} aria-hidden />
         </button>
         {renaming ? (
           <form
-            className="flex flex-1 items-center gap-1"
+            className="flex min-w-0 flex-1 items-center gap-1"
             onSubmit={(e) => {
               e.preventDefault();
               setRenaming(false);
@@ -858,349 +947,501 @@ export function Editor({ designId }: { designId?: string }) {
               aria-label={t('editor.renombrar')}
               value={store.nombre}
               onChange={(e) => store.setNombre(e.target.value)}
-              maxLength={60}
-              className="w-full rounded-pill border-2 border-pink-300 bg-surface px-4 py-1.5 font-display font-semibold"
+              maxLength={40}
+              className="h-9 w-full rounded-control border border-border px-3 text-[15px] font-medium outline-none focus:border-pink-500"
             />
-            <button type="submit" aria-label={t('common.acciones.aceptar')} className="p-2 text-pink-700">
-              <Check size={20} />
+            <button type="submit" aria-label={t('common.acciones.aceptar')} className="p-2 text-pink-500">
+              <Check size={18} aria-hidden />
             </button>
           </form>
         ) : (
           <button
             type="button"
             onClick={() => setRenaming(true)}
-            className="flex min-w-0 items-center gap-1 font-display text-lg font-semibold"
+            className="flex min-w-0 items-center gap-1.5 rounded-control px-2 py-1 transition-colors hover:bg-surface-2"
           >
-            <span className="truncate">{store.nombre}</span>
-            <Pencil size={16} className="shrink-0 text-text-soft" />
+            <span className="truncate font-display text-[17px] font-semibold">{store.nombre}</span>
+            <Pencil size={14} className="shrink-0 text-text-soft" aria-hidden />
           </button>
         )}
-        <div className="flex items-center gap-1">
-          <PriceTag centimos={totalCentimos} onClick={() => setBreakdownOpen(true)} />
-          <button
-            type="button"
-            aria-label="Menú"
-            onClick={() => setMenuOpen(true)}
-            className="flex h-11 w-11 items-center justify-center rounded-pill text-pink-700 hover:bg-pink-200"
-          >
-            <MoreHorizontal size={22} />
-          </button>
-        </div>
+        <button
+          type="button"
+          aria-label={t('common.nav.menu')}
+          onClick={() => setMenuOpen(true)}
+          className="flex h-11 w-11 items-center justify-center rounded-control text-text-soft transition-colors hover:bg-surface-2"
+        >
+          <MoreHorizontal size={20} aria-hidden />
+        </button>
       </div>
 
-      {/* Visor 3D */}
+      {/* Visor */}
       <div ref={viewerRef} className="relative min-h-0 flex-1 touch-none">
-        {device && currentVariant && (
-          <CaseViewer
+        {device && currentVariant && currentCase && (
+          <Viewer3D
             device={device}
-            variant={currentVariant}
-            instances={store.instances}
+            material={currentCase.material}
+            colorHex={currentVariant.colorHex}
+            items={viewerItems}
             catalog={catalog}
-            view={view}
-            zoom={zoom}
             visualStates={visualStates}
             showGrid={showGrid}
             guides={guides}
-            onElementPointerDown={onElementPointerDown}
-            onBackgroundPointerDown={() => store.select(null)}
+            snapTarget={snapTarget}
+            onSnapReached={onSnapReached}
+            onCameraChange={setCameraState}
+            onItemPointerDown={onItemPointerDown}
             onPlanePointerMove={onPlanePointerMove}
+            onBackgroundTap={() => {
+              if (!dragRef.current && !twistRef.current) store.select(null);
+            }}
+            controlsRef={(c) => {
+              controlsRef.current = c;
+            }}
           />
         )}
-        {(elementsLoading || !device || !currentVariant) && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <p className="animate-pulse font-display text-lg text-pink-600">
-              {t('common.estados.cargando')} ✨
-            </p>
+        <p className="sr-only" aria-live="polite">
+          {currentCase && t('editor.accesibilidad.visor', { nombre: `${currentCase.nombre} ${currentVariant?.colorNombre ?? ''}`, n: store.items.length })}
+        </p>
+
+        {loading && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-bg">
+            <span className="wordmark text-lg text-text">Cute Cases</span>
+            <div className="h-1 w-48 overflow-hidden rounded bg-surface-2">
+              <div className="skeleton-shimmer h-full w-full" />
+            </div>
+            <p className="text-[13px] text-text-soft">{t('editor.preparando')}</p>
           </div>
         )}
         {elementsError && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-            <p className="font-display">{t('common.estados.error')}</p>
-            <Button variant="secondary" size="sm" onClick={() => refetchElements()}>
-              {t('common.estados.reintentar')}
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg">
+            <p className="text-[15px]">{t('toasts.T15')}</p>
+            <Button variant="secondary" onClick={() => refetchElements()}>
+              {t('common.acciones.reintentar')}
             </Button>
           </div>
         )}
 
-        {/* Navegación de vistas (§6.2) */}
-        <div className="absolute inset-x-0 bottom-2 flex items-center justify-center gap-2">
-          <button
-            type="button"
-            aria-label="Vista anterior"
-            onClick={() => setView(VIEWS[Math.max(0, VIEWS.indexOf(view) - 1)]!)}
-            className="flex h-10 w-10 items-center justify-center rounded-pill bg-surface/90 text-pink-700 shadow-sm"
-          >
-            <ChevronLeft size={20} />
-          </button>
-          <span className="rounded-pill bg-surface/90 px-4 py-2 text-sm font-bold shadow-sm">
-            {t(
-              `editor.vistas.${
-                { 'trasera': 'trasera', 'lateral-izq': 'lateralIzq', 'lateral-der': 'lateralDer', 'esquina-sup': 'esquinaSup', 'esquina-inf': 'esquinaInf' }[view]
-              }`,
-            )}
-          </span>
-          <button
-            type="button"
-            aria-label="Vista siguiente"
-            onClick={() => setView(VIEWS[Math.min(VIEWS.length - 1, VIEWS.indexOf(view) + 1)]!)}
-            className="flex h-10 w-10 items-center justify-center rounded-pill bg-surface/90 text-pink-700 shadow-sm"
-          >
-            <ChevronRight size={20} />
-          </button>
+        {/* Chips de vista (SS7.3) */}
+        <div className="absolute inset-x-0 bottom-2 flex items-center justify-center gap-1.5">
+          {(['trasera', 'lateral-izq', 'lateral-der'] as SnapView[]).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setSnapTarget(v)}
+              className={`rounded-control border px-3 py-1.5 text-[13px] font-medium shadow-1 transition-colors ${
+                activeSnap === v
+                  ? 'border-pink-300 bg-pink-100 text-pink-700'
+                  : 'border-border bg-surface text-text-soft hover:text-text'
+              }`}
+            >
+              {t(`editor.vistas.${v === 'trasera' ? 'trasera' : v === 'lateral-izq' ? 'lateralIzq' : 'lateralDer'}`)}
+            </button>
+          ))}
         </div>
 
-        {/* Panel contextual del elemento seleccionado (§6.4 alternativas accesibles) */}
-        {selected && placementAllowed && (
-          <div className="absolute right-2 top-2 flex flex-col items-center gap-1 rounded-card bg-surface/95 p-2 shadow-md">
-            {!selectedExpired && (
+        {/* Tooltip de rotacion (SS7.6) */}
+        {rotationTooltip !== null && (
+          <div className="tabular absolute left-1/2 top-4 -translate-x-1/2 rounded-control bg-text px-2.5 py-1 text-[13px] font-medium text-white">
+            {rotationTooltip}&deg;
+          </div>
+        )}
+
+        {/* Zona de papelera durante drag (SS7.6) */}
+        {(dragRef.current?.moved || ghost) && (
+          <div
+            id="cc-trash-zone"
+            className={`absolute bottom-14 left-1/2 flex -translate-x-1/2 items-center justify-center rounded-full border transition-all ${
+              trashActive
+                ? 'h-16 w-16 border-error bg-error-bg text-error'
+                : 'h-[52px] w-[52px] border-border bg-surface text-text-soft'
+            }`}
+          >
+            <Trash2 size={22} aria-hidden />
+          </div>
+        )}
+
+        {/* Panel contextual del seleccionado (SS7.6, alternativa no gestual) */}
+        {selected && selectedElement && (
+          <div className="absolute right-2 top-2 flex w-[168px] flex-col gap-2 rounded-card border border-border bg-surface p-2.5 shadow-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="truncate text-[13px] font-medium">{selectedElement.nombre}</span>
+              <span className="tabular shrink-0 text-[13px] text-text-soft">
+                {formatCentimos(selectedElement.precioCentimos)}
+              </span>
+            </div>
+            {selectedExpired ? (
               <>
-                <div className="grid grid-cols-3 gap-0.5">
+                <Badge variant="noDisponible">{t('common.badges.noDisponible')}</Badge>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={() => {
+                    setReplacingId(selected.instanceId);
+                    setSheetPos('full');
+                  }}
+                >
+                  {t('common.acciones.sustituir')}
+                </Button>
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 gap-1">
                   <span />
-                  <button type="button" aria-label={t('editor.accesibilidad.arriba')} onClick={() => nudge(0, -1)} className="rounded-thumb p-1.5 text-pink-700 hover:bg-pink-100">▲</button>
+                  <NudgeButton label={t('editor.accesibilidad.arriba')} onNudge={() => nudge(0, -1)}>
+                    <ArrowUp size={15} aria-hidden />
+                  </NudgeButton>
                   <span />
-                  <button type="button" aria-label={t('editor.accesibilidad.izquierda')} onClick={() => nudge(-1, 0)} className="rounded-thumb p-1.5 text-pink-700 hover:bg-pink-100">◀</button>
-                  <button type="button" aria-label={t('common.acciones.centrar')} onClick={centerSelected} className="rounded-thumb p-1.5 text-pink-700 hover:bg-pink-100">
-                    <Crosshair size={16} />
+                  <NudgeButton label={t('editor.accesibilidad.izquierda')} onNudge={() => nudge(-1, 0)}>
+                    <ArrowLeft size={15} aria-hidden />
+                  </NudgeButton>
+                  <button
+                    type="button"
+                    aria-label={t('common.acciones.centrar')}
+                    onClick={centerSelected}
+                    className="flex h-9 items-center justify-center rounded-control border border-border text-text-soft hover:text-text"
+                  >
+                    <Crosshair size={15} aria-hidden />
                   </button>
-                  <button type="button" aria-label={t('editor.accesibilidad.derecha')} onClick={() => nudge(1, 0)} className="rounded-thumb p-1.5 text-pink-700 hover:bg-pink-100">▶</button>
+                  <NudgeButton label={t('editor.accesibilidad.derecha')} onNudge={() => nudge(1, 0)}>
+                    <ArrowRightIcon size={15} aria-hidden />
+                  </NudgeButton>
                   <span />
-                  <button type="button" aria-label={t('editor.accesibilidad.abajo')} onClick={() => nudge(0, 1)} className="rounded-thumb p-1.5 text-pink-700 hover:bg-pink-100">▼</button>
+                  <NudgeButton label={t('editor.accesibilidad.abajo')} onNudge={() => nudge(0, 1)}>
+                    <ArrowDown size={15} aria-hidden />
+                  </NudgeButton>
                   <span />
                 </div>
-                <div className="flex items-center gap-1">
-                  <RotateCw size={14} className="text-text-soft" />
+                <label className="flex items-center gap-1.5">
+                  <RotateCw size={14} className="shrink-0 text-text-soft" aria-hidden />
                   <input
                     type="number"
-                    aria-label={t('editor.accesibilidad.rotar')}
-                    value={Math.round(selected.rotacionGrados)}
+                    aria-label={t('editor.accesibilidad.rotarElemento')}
+                    value={Math.round(selected.rotationDeg)}
                     onChange={(e) => rotateTo(Number(e.target.value))}
-                    className="w-16 rounded-pill border border-pink-200 px-2 py-1 text-center text-sm"
+                    className="tabular h-8 w-full rounded-control border border-border px-2 text-center text-[13px] outline-none focus:border-pink-500"
                   />
-                </div>
+                </label>
               </>
-            )}
-            {selectedExpired && (
-              <Button size="sm" variant="secondary" onClick={() => { setActiveTab('corazones'); setSheetPos('expanded'); }}>
-                {t('common.acciones.sustituir')}
-              </Button>
             )}
             <button
               type="button"
               aria-label={t('editor.accesibilidad.eliminarElemento')}
-              onClick={() => store.removeInstance(selected.instanceId)}
-              className="flex h-10 w-10 items-center justify-center rounded-pill text-error hover:bg-error-bg"
+              onClick={() => store.removeItem(selected.instanceId)}
+              className="flex h-9 items-center justify-center gap-1.5 rounded-control text-[13px] font-medium text-error transition-colors hover:bg-error-bg"
             >
-              <Trash2 size={18} />
+              <Trash2 size={15} aria-hidden />
+              {t('common.acciones.eliminar')}
             </button>
           </div>
         )}
       </div>
 
-      {/* Barra de acciones (§6.1) */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2">
-        <div className="flex gap-1">
+      {/* Barra de precio y acciones (SS7.1) */}
+      <div className="flex items-center justify-between gap-2 border-t border-border bg-surface px-3 py-2">
+        <div className="flex items-center gap-1">
+          <PriceTag centimos={totalCentimos} onClick={() => setBreakdownOpen(true)} />
           <button
             type="button"
             aria-label={t('common.acciones.deshacer')}
-            disabled={store.past.length === 0}
+            disabled={store.history.past.length === 0}
             onClick={store.undo}
-            className="flex h-11 w-11 items-center justify-center rounded-pill text-pink-700 hover:bg-pink-200 disabled:opacity-30"
+            className="flex h-10 w-10 items-center justify-center rounded-control text-text-soft transition-colors hover:bg-surface-2 disabled:opacity-30"
           >
-            <Undo2 size={20} />
+            <Undo2 size={18} aria-hidden />
           </button>
           <button
             type="button"
             aria-label={t('common.acciones.rehacer')}
-            disabled={store.future.length === 0}
+            disabled={store.history.future.length === 0}
             onClick={store.redo}
-            className="flex h-11 w-11 items-center justify-center rounded-pill text-pink-700 hover:bg-pink-200 disabled:opacity-30"
+            className="flex h-10 w-10 items-center justify-center rounded-control text-text-soft transition-colors hover:bg-surface-2 disabled:opacity-30"
           >
-            <Redo2 size={20} />
+            <Redo2 size={18} aria-hidden />
           </button>
         </div>
-        <div className="flex gap-2">
-          <Button size="sm" loading={saving} onClick={() => void doSave()}>
+        <div className="flex items-center gap-2">
+          <Button size="md" loading={saving} onClick={() => void doSave()}>
             {t('common.acciones.guardar')}
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => setShareOpen(true)}>
-            <Share2 size={16} /> {t('common.acciones.compartir')}
-          </Button>
-          <Button size="sm" variant="secondary" disabled={hasExpired} onClick={() => void addToCart()}>
-            <ShoppingBag size={16} />
-          </Button>
+          <button
+            type="button"
+            aria-label={t('common.acciones.compartir')}
+            onClick={() => setShareOpen(true)}
+            className="flex h-10 w-10 items-center justify-center rounded-control border border-border text-text-soft transition-colors hover:text-text"
+          >
+            <Share2 size={18} aria-hidden />
+          </button>
+          <button
+            type="button"
+            aria-label={t('common.acciones.anadirCesta')}
+            disabled={hasExpired}
+            title={hasExpired ? t('toasts.T10') : undefined}
+            onClick={() => void addToCart()}
+            className="flex h-10 w-10 items-center justify-center rounded-control border border-border text-text-soft transition-colors hover:text-text disabled:opacity-40"
+          >
+            <ShoppingBag size={18} aria-hidden />
+          </button>
         </div>
       </div>
 
-      {/* Bottom sheet de elementos (§6.1) */}
+      {/* BottomSheet de elementos (SS7.1) */}
       <BottomSheet
         position={sheetPos}
         onPositionChange={setSheetPos}
         header={
-          <Tabs tabs={categoryTabs} active={activeTab} onChange={(id) => { setActiveTab(id); if (sheetPos === 'collapsed') setSheetPos('half'); }} label="Categorías" />
+          <Tabs
+            tabs={categoryTabs}
+            active={activeTab}
+            onChange={(id) => {
+              setActiveTab(id);
+              if (sheetPos === 'collapsed') setSheetPos('half');
+            }}
+            label="Categorias"
+          />
         }
       >
-        {!placementAllowed ? (
+        {!backFacing && (
           <button
             type="button"
-            onClick={() => setView('trasera')}
-            className="mt-4 w-full rounded-card bg-pink-100 px-4 py-6 text-center font-bold text-pink-700"
+            onClick={() => setSnapTarget('trasera')}
+            className="mb-3 w-full rounded-card border border-border bg-surface-2 px-4 py-3 text-center text-[13px] font-medium text-text-soft"
           >
-            {t('toasts.E11')}
+            {t('toasts.T11')}
           </button>
-        ) : (
-          <>
-            {activeTab === 'letras' && (
-              <form
-                className="mb-3 flex items-end gap-2 px-1 pt-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void createLetters();
-                }}
-              >
+        )}
+        <div className={backFacing ? '' : 'pointer-events-auto opacity-50'}>
+          {activeTab === 'letras' && (
+            <form
+              className="mb-3 flex flex-col gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void createLetters();
+              }}
+            >
+              <div className="flex gap-1.5">
+                {(['letras-oro', 'letras-sticker'] as const).map((j) => (
+                  <button
+                    key={j}
+                    type="button"
+                    onClick={() => setLettersJuego(j)}
+                    aria-pressed={lettersJuego === j}
+                    className={`h-8 rounded-control border px-3 text-[13px] font-medium ${
+                      lettersJuego === j ? 'border-pink-300 bg-pink-100 text-pink-700' : 'border-border text-text-soft'
+                    }`}
+                  >
+                    {t(j === 'letras-oro' ? 'editor.letras.juegoOro' : 'editor.letras.juegoSticker')}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-end gap-2">
                 <Input
-                  label={t('editor.letras.placeholder')}
-                  hint={t('editor.letras.maximo')}
+                  label={t('editor.letras.label')}
+                  placeholder={t('editor.letras.placeholder')}
                   value={lettersText}
                   onChange={(e) => setLettersText(e.target.value)}
                   maxLength={14}
                   className="flex-1"
                 />
-                <Button type="submit" size="md">
-                  {t('editor.letras.crear')}
-                </Button>
-              </form>
-            )}
-            <div className="grid grid-cols-4 gap-2 px-1 pt-2 md:grid-cols-6">
-              {tabElements.map((el) => (
-                <button
-                  key={el.id}
-                  type="button"
-                  onClick={() => addElement(el)}
-                  className="flex flex-col items-center gap-1 rounded-thumb border-2 border-pink-100 bg-surface p-2 transition-colors hover:border-pink-300"
-                >
-                  <span className="text-2xl" aria-hidden>
-                    {el.categoria === 'letras' ? (el.letraChar ?? '✱') : categoryEmoji(el.categoria ?? activeTab)}
-                  </span>
-                  <span className="w-full truncate text-center text-[11px] font-bold">{el.nombre}</span>
-                  <span className="text-[11px] text-pink-600">{formatCentimos(el.precioCentimos ?? 0)}</span>
-                  <span className="flex gap-0.5">
-                    <Badge variant={el.tipo === 'charm3d' ? 'tresD' : 'sticker'}>
-                      {el.tipo === 'charm3d' ? t('common.badges.tresD') : t('common.badges.sticker')}
-                    </Badge>
-                    {el.esNuevo && <Badge variant="nuevo">{t('common.badges.nuevo')}</Badge>}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </>
-        )}
+                <Button type="submit">{t('editor.letras.crear')}</Button>
+              </div>
+            </form>
+          )}
+          <div className="grid grid-cols-4 gap-2 md:grid-cols-6">
+            {tabElements.map((el) => (
+              <button
+                key={el.id}
+                type="button"
+                onClick={() => addElement(el)}
+                onPointerDown={(e) => {
+                  // Regla 9: drag desde miniatura = modo arrastre con fantasma
+                  if (!backFacing || !device) return;
+                  const startY = e.clientY;
+                  const startX = e.clientX;
+                  const onMove = (ev: PointerEvent) => {
+                    if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 14 && !ghost) {
+                      const id = `ghost-${newInstanceId()}`;
+                      const g: PlacedItem = {
+                        instanceId: id, elementId: el.id,
+                        xMm: device.anchoMm / 2, yMm: device.altoMm / 2, rotationDeg: 0,
+                        letterChar: el.letraChar ?? undefined,
+                      };
+                      setGhost(g);
+                      dragRef.current = {
+                        id, pointerId: e.pointerId, startX, startY, moved: true,
+                        isTouch: e.pointerType === 'touch',
+                        lastValid: { xMm: g.xMm, yMm: g.yMm, rotationDeg: 0 },
+                        hadValid: false, isGhost: true,
+                      };
+                      if (controlsRef.current) controlsRef.current.enabled = false;
+                      window.removeEventListener('pointermove', onMove);
+                    }
+                  };
+                  window.addEventListener('pointermove', onMove);
+                  window.addEventListener('pointerup', () => window.removeEventListener('pointermove', onMove), { once: true });
+                }}
+                className="flex flex-col items-center gap-1 rounded-thumb border border-border bg-surface p-2 transition-colors hover:border-pink-300"
+              >
+                <ElementThumb element={el} />
+                <span className="w-full truncate text-center text-xs font-medium">
+                  {el.letraChar ?? el.nombre}
+                </span>
+                <span className="tabular text-xs font-semibold text-text-soft">
+                  {formatCentimos(el.precioCentimos)}
+                </span>
+                <Badge variant={el.tipo === 'charm3d' ? 'tresD' : 'sticker'}>
+                  {el.tipo === 'charm3d' ? t('common.badges.tresD') : t('common.badges.sticker')}
+                </Badge>
+              </button>
+            ))}
+          </div>
+        </div>
       </BottomSheet>
 
-      {/* Menú ⋯ */}
-      <Modal open={menuOpen} onClose={() => setMenuOpen(false)} title="Menú">
+      {/* Menu (SS7.1) */}
+      <Modal open={menuOpen} onClose={() => setMenuOpen(false)} title={t('common.nav.menu')}>
         <div className="flex flex-col gap-2">
-          <label className="flex items-center justify-between rounded-thumb bg-pink-50 px-4 py-3 font-bold">
+          <label className="flex h-11 items-center justify-between rounded-control border border-border px-3 text-[15px] font-medium">
             {t('editor.menu.cuadricula')}
-            <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} className="h-5 w-5 accent-pink-600" />
+            <input
+              type="checkbox"
+              checked={showGrid}
+              onChange={(e) => setShowGrid(e.target.checked)}
+              className="h-4 w-4 accent-pink-700"
+            />
           </label>
-          {currentVariant && casesData && (
-            <div className="rounded-thumb bg-pink-50 px-4 py-3">
-              <p className="mb-2 font-bold">{currentVariant.nombre}</p>
+          {currentCase && (
+            <div className="rounded-control border border-border p-3">
+              <p className="mb-2 text-[13px] font-medium text-text-soft">{currentCase.nombre}</p>
               <div className="flex gap-2">
-                {casesData.fundas
-                  .find((f) => f.variantes.some((v) => v.id === store.caseVariantId))
-                  ?.variantes.filter((v) => v.disponible)
+                {currentCase.variantes
+                  .filter((v) => v.disponible)
                   .map((v) => (
                     <button
                       key={v.id}
                       type="button"
                       aria-label={v.colorNombre}
-                      aria-pressed={v.id === store.caseVariantId}
-                      onClick={() => store.setVariant(v.id)}
-                      className={`h-9 w-9 rounded-pill border-2 ${v.id === store.caseVariantId ? 'border-pink-700 ring-2 ring-pink-300' : 'border-pink-200'}`}
+                      aria-pressed={v.id === store.variantId}
+                      onClick={() => store.setVariant(v)}
+                      className={`h-8 w-8 rounded-full border-2 ${
+                        v.id === store.variantId ? 'border-pink-500 ring-2 ring-pink-500/30' : 'border-border'
+                      }`}
                       style={{ backgroundColor: v.colorHex }}
                     />
                   ))}
               </div>
             </div>
           )}
+          <Button
+            variant="secondary"
+            disabled={!store.designId}
+            onClick={async () => {
+              if (!store.designId) return;
+              try {
+                await api(`/api/designs/${store.designId}/duplicate`, { method: 'POST' });
+                showToast(t('toasts.T24'), 'success');
+              } catch {
+                showToast(t('toasts.T15'), 'error');
+              }
+              setMenuOpen(false);
+            }}
+          >
+            {t('editor.menu.duplicar')}
+          </Button>
+          <Button variant="secondary" onClick={() => { setMenuOpen(false); setHelpOpen(true); }}>
+            {t('editor.menu.ayuda')}
+          </Button>
         </div>
       </Modal>
 
-      {/* Desglose del precio (§6.7) */}
+      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title={t('editor.menu.ayuda')}>
+        <ul className="flex list-disc flex-col gap-2 pl-5 text-[13px] text-text-soft">
+          <li>Arrastra en una zona vacia para girar la funda.</li>
+          <li>Arrastra una pieza para moverla; el rojo indica que no cabe.</li>
+          <li>Con una pieza seleccionada, gira con dos dedos o con el campo de grados.</li>
+          <li>El tamano de las piezas es fijo: se mueven, giran y eliminan.</li>
+        </ul>
+      </Modal>
+
+      {/* Desglose (SS7.9) */}
       <Modal open={breakdownOpen} onClose={() => setBreakdownOpen(false)} title={t('editor.desglose')}>
         {breakdown && (
           <ul className="flex flex-col gap-2">
             {breakdown.lines.map((line, i) => (
-              <li key={i} className="flex items-center justify-between gap-2 text-sm">
-                <span className="truncate">{line.label}</span>
-                <span className="flex items-center gap-2 font-bold">
-                  {formatCentimos(line.centimos)}
+              <li key={i} className="flex items-center justify-between gap-2 text-[13px]">
+                <span className="flex min-w-0 items-center gap-2">
+                  {line.elementId && catalog.get(line.elementId) && (
+                    <ElementThumb element={catalog.get(line.elementId)!} size={32} />
+                  )}
+                  <span className="truncate">{line.label}</span>
+                </span>
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className="tabular font-medium">{formatCentimos(line.centimos)}</span>
                   {line.instanceId && (
                     <button
                       type="button"
                       aria-label={t('common.acciones.eliminar')}
-                      onClick={() => store.removeInstance(line.instanceId!)}
+                      onClick={() => store.removeItem(line.instanceId!)}
                       className="text-error"
                     >
-                      <Trash2 size={16} />
+                      <Trash2 size={14} aria-hidden />
                     </button>
                   )}
                 </span>
               </li>
             ))}
-            <li className="mt-2 flex justify-between border-t-2 border-pink-100 pt-2 font-display font-bold">
-              <span>{t('cesta.total')}</span>
-              <span className="text-pink-600">{formatCentimos(breakdown.totalCentimos)}</span>
+            <li className="mt-1 flex justify-between border-t border-border pt-2 text-[15px] font-semibold">
+              <span>{t('common.precio.total')}</span>
+              <span className="tabular">{formatCentimos(breakdown.totalCentimos)}</span>
             </li>
           </ul>
         )}
       </Modal>
 
-      {/* Compartir (§8) */}
+      {/* Compartir (SS16.2) */}
       <Modal open={shareOpen} onClose={() => setShareOpen(false)} title={t('common.acciones.compartir')}>
-        <div className="flex flex-col gap-3">
-          <Button onClick={() => { setShareOpen(false); void shareStory(); }}>
-            {t('regalo.compartirImagen')} ✨
+        <div className="flex flex-col gap-2">
+          <Button onClick={() => { setShareOpen(false); void shareImage(); }}>
+            {t('regalo.compartirImagen')}
           </Button>
-          <Button variant="secondary" onClick={() => { setShareOpen(false); void shareGiftLink(); }}>
+          <Button variant="secondary" onClick={() => { setShareOpen(false); void shareLink(); }}>
             {t('regalo.compartirEnlace')}
           </Button>
         </div>
       </Modal>
 
-      {/* Elementos caducados (§4.5, E-09) */}
-      <Modal open={expiredModal} onClose={() => setExpiredModal(false)} title={t('editor.caducados.titulo')}>
-        <p className="mb-3 text-sm text-text-soft">{t('editor.caducados.texto')}</p>
-        <ul className="mb-4 flex flex-col gap-1">
-          {store.instances
+      {/* Caducados (SS7.8) */}
+      <Modal open={expiredModal} onClose={() => setExpiredModal(false)} title={t('editor.caducadosTitulo')}>
+        <p className="mb-3 text-[13px] text-text-soft">{t('toasts.T09')}</p>
+        <ul className="mb-4 flex flex-col gap-1.5">
+          {store.items
             .filter((i) => expiredIds.has(i.elementId))
-            .map((i) => (
-              <li key={i.instanceId} className="flex items-center justify-between rounded-thumb bg-error-bg px-3 py-2 text-sm font-bold text-error">
-                {i.letraChar ? `Letra «${i.letraChar}»` : (catalog.get(i.elementId)?.nombre ?? t('editor.caducados.noDisponible'))}
-              </li>
-            ))}
+            .map((i) => {
+              const el = catalog.get(i.elementId);
+              return (
+                <li key={i.instanceId} className="flex items-center justify-between rounded-control bg-surface-2 px-3 py-2 text-[13px]">
+                  <span>{i.letterChar ? `${el?.nombre ?? ''} "${i.letterChar}"` : (el?.nombre ?? t('common.badges.noDisponible'))}</span>
+                  <span className="tabular text-text-soft">{el ? formatCentimos(el.precioCentimos) : ''}</span>
+                </li>
+              );
+            })}
         </ul>
-        <Button onClick={() => setExpiredModal(false)}>{t('common.acciones.aceptar')}</Button>
+        <Button onClick={() => setExpiredModal(false)}>{t('common.acciones.revisar')}</Button>
       </Modal>
 
-      {/* Recuperar borrador (E-13) */}
-      <Modal open={Boolean(draftPrompt)} onClose={() => setDraftPrompt(null)} title={t('editor.recuperarBorrador')}>
+      {/* Borrador recuperable (T-13) */}
+      <Modal open={Boolean(draftPrompt)} onClose={() => setDraftPrompt(null)} title={t('toasts.T13')} dismissable={false}>
         <div className="flex flex-col gap-2">
           <Button
             onClick={() => {
               const d = draftPrompt!;
               store.init({
-                designId: d.designId,
-                nombre: d.nombre,
-                deviceId: d.deviceId,
-                caseVariantId: d.caseVariantId,
-                instances: d.instances,
+                designId: d.designId, nombre: d.nombre, deviceId: d.deviceId,
+                variantId: d.variantId, items: d.items,
               });
               setDraftPrompt(null);
             }}
           >
-            {t('editor.recuperarSi')}
+            {t('common.acciones.continuar')}
           </Button>
           <Button
             variant="secondary"
@@ -1210,13 +1451,13 @@ export function Editor({ designId }: { designId?: string }) {
               router.replace('/fundas');
             }}
           >
-            {t('editor.recuperarNo')}
+            {t('common.acciones.empezarDeCero')}
           </Button>
         </div>
       </Modal>
 
-      {/* Guardar siendo invitado (E-12, §5.7) */}
-      <Modal open={authPrompt} onClose={() => setAuthPrompt(false)} title={t('toasts.E12')}>
+      {/* Guardar sin sesion (T-12, SS15.4) */}
+      <Modal open={authPrompt} onClose={() => setAuthPrompt(false)} title={t('toasts.T12')}>
         <div className="flex flex-col gap-2">
           <Button onClick={() => router.push('/registro?next=/editor')}>{t('auth.registrarse')}</Button>
           <Button variant="secondary" onClick={() => router.push('/login?next=/editor')}>
@@ -1224,21 +1465,74 @@ export function Editor({ designId }: { designId?: string }) {
           </Button>
         </div>
       </Modal>
+
+      {/* Conflicto (T-19, SS7.10) */}
+      <Modal open={Boolean(conflict)} onClose={() => setConflict(null)} title={t('editor.conflictoTitulo')} dismissable={false}>
+        <p className="mb-4 text-[13px] text-text-soft">{t('toasts.T19')}</p>
+        <div className="flex flex-col gap-2">
+          <Button
+            onClick={async () => {
+              const s = useEditorStore.getState();
+              if (conflict?.serverUpdatedAt) {
+                useEditorStore.setState({ serverUpdatedAt: conflict.serverUpdatedAt });
+              } else if (s.designId) {
+                const fresh = await api<{ updatedAt: string }>(`/api/designs/${s.designId}`);
+                useEditorStore.setState({ serverUpdatedAt: fresh.updatedAt });
+              }
+              setConflict(null);
+              void doSave();
+            }}
+          >
+            {t('common.acciones.sobrescribir')}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setConflict(null);
+              void doSave(true);
+            }}
+          >
+            {t('common.acciones.guardarCopia')}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
 
-function categoryEmoji(categoria: string): string {
-  const map: Record<string, string> = {
-    corazones: '💖',
-    lazos: '🎀',
-    flores: '🌸',
-    frutas: '🍓',
-    animales: '🐰',
-    estrellas: '⭐',
-    cadenas: '⛓️',
-    temporada: '🎄',
-    letras: '🔤',
+/** Flecha de desplazamiento fino: 1 mm por pulsacion, mantenida acelera (SS7.6). */
+function NudgeButton({
+  label,
+  onNudge,
+  children,
+}: {
+  label: string;
+  onNudge: () => void;
+  children: React.ReactNode;
+}) {
+  const interval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stop = () => {
+    if (timeout.current) clearTimeout(timeout.current);
+    if (interval.current) clearInterval(interval.current);
+    timeout.current = null;
+    interval.current = null;
   };
-  return map[categoria] ?? '✨';
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onNudge}
+      onPointerDown={() => {
+        timeout.current = setTimeout(() => {
+          interval.current = setInterval(onNudge, 200); // 5 mm/s (SS7.6)
+        }, 400);
+      }}
+      onPointerUp={stop}
+      onPointerLeave={stop}
+      className="flex h-9 items-center justify-center rounded-control border border-border text-text-soft hover:text-text"
+    >
+      {children}
+    </button>
+  );
 }

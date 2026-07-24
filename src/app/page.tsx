@@ -1,176 +1,227 @@
+import Image from 'next/image';
 import Link from 'next/link';
 import { getTranslations } from 'next-intl/server';
-import { Sparkles, Smartphone, Palette, Heart } from 'lucide-react';
 import { prisma } from '@/server/db';
-import { Header } from '@/components/layout/Header';
-import { Footer } from '@/components/layout/Footer';
-import { Card } from '@/components/ui';
-import { CookieBanner } from '@/components/CookieBanner';
-import { HomeCta } from '@/components/home/HomeCta';
 import { formatCentimos } from '@/lib/pricing';
+import { PageShell } from '@/components/layout/PageShell';
+import { HeroCta } from '@/components/home/HeroCta';
+import { ProductCard } from '@/components/ProductCard';
+import { GalleryCard, type GalleryItem } from '@/components/GalleryCard';
+import { CookieBanner } from '@/components/CookieBanner';
+import { Badge } from '@/components/ui';
 
-export const dynamic = 'force-dynamic';
+// SS5.1: SSG con revalidacion.
+export const revalidate = 300;
 
 async function getHomeData() {
-  try {
-    const now = new Date();
-    const [presets, gallery, season, heroClaim] = await Promise.all([
-      prisma.presetDesign.findMany({
-        where: { publicado: true },
-        orderBy: { orden: 'asc' },
-        take: 8,
-        select: { slug: true, nombre: true, precioCentimos: true, fotos: true },
-      }),
-      prisma.design.findMany({
-        where: { publicadoGaleria: true },
-        orderBy: { likesCount: 'desc' },
-        take: 4,
-        select: { id: true, nombre: true, thumbnailUrl: true, likesCount: true, shareToken: true },
-      }),
-      prisma.seasonCollection.findFirst({
-        where: { activo: true, fechaInicio: { lte: now }, fechaFin: { gte: now } },
-      }),
-      prisma.appSetting.findUnique({ where: { key: 'heroClaim' } }),
-    ]);
-    return {
-      presets,
-      gallery,
-      season,
-      heroClaim: typeof heroClaim?.value === 'string' ? heroClaim.value : null,
-    };
-  } catch {
-    // Sin BD (p. ej. build sin entorno): la home renderiza con secciones vacías
-    return { presets: [], gallery: [], season: null, heroClaim: null };
-  }
+  const now = new Date();
+  const [settings, presets, season, publishedCount, topWeek] = await Promise.all([
+    prisma.settings.findUnique({ where: { id: 1 } }),
+    prisma.presetDesign.findMany({
+      where: { publicado: true },
+      orderBy: { orden: 'asc' },
+      take: 4,
+      select: { slug: true, nombre: true, precioCentimos: true, fotos: true },
+    }),
+    prisma.seasonCollection.findFirst({
+      where: { activo: true, fechaInicio: { lte: now }, fechaFin: { gte: now } },
+      include: {
+        elementos: {
+          where: { activo: true },
+          orderBy: { orden: 'asc' },
+          take: 4,
+          select: { slug: true, nombre: true },
+        },
+      },
+    }),
+    prisma.design.count({ where: { publicadoGaleria: true } }),
+    prisma.design.findMany({
+      where: { publicadoGaleria: true },
+      orderBy: [{ likesCount: 'desc' }, { updatedAt: 'desc' }],
+      take: 4,
+      include: { user: { select: { nombre: true } } },
+    }),
+  ]);
+  return { settings, presets, season, publishedCount, topWeek };
 }
 
-/** Home (§5.2): hero rosa dominante + carrusel + galería + temporada + cómo funciona. */
 export default async function HomePage() {
   const t = await getTranslations();
-  const { presets, gallery, season, heroClaim } = await getHomeData();
+  const { settings, presets, season, publishedCount, topWeek } = await getHomeData();
+
+  const galleryItems: GalleryItem[] = topWeek.map((d) => ({
+    id: d.id,
+    nombre: d.nombre,
+    thumbnailUrl: d.thumbnailUrl,
+    likesCount: d.likesCount,
+    autor: d.autorVisible ? (d.user?.nombre?.split(' ')[0] ?? null) : null,
+    shareToken: d.shareToken,
+    likedByMe: false,
+  }));
+
+  const pasos = [
+    { titulo: t('home.paso1Titulo'), texto: t('home.paso1Texto'), img: '/renders/pasos/modelo.webp', alt: t('home.pasoAlt1') },
+    { titulo: t('home.paso2Titulo'), texto: t('home.paso2Texto'), img: '/renders/pasos/funda.webp', alt: t('home.pasoAlt2') },
+    { titulo: t('home.paso3Titulo'), texto: t('home.paso3Texto'), img: '/renders/pasos/piezas.webp', alt: t('home.pasoAlt3') },
+  ];
 
   return (
-    <>
-      <Header />
-      <main className="mx-auto max-w-5xl px-4">
-        {/* 2. Hero: vídeo/render pregenerado, NUNCA WebGL (§5.2, §14) */}
-        <section className="relative mt-4 overflow-hidden rounded-card bg-gradient-to-br from-pink-500 via-pink-600 to-pink-700 px-6 py-14 text-center shadow-lg">
-          <div aria-hidden className="absolute inset-0 opacity-30">
-            <span className="absolute left-[12%] top-[18%] text-2xl">✨</span>
-            <span className="absolute right-[15%] top-[30%] text-xl">✨</span>
-            <span className="absolute left-[25%] bottom-[22%] text-lg">🎀</span>
-            <span className="absolute right-[22%] bottom-[15%] text-2xl">💖</span>
-          </div>
-          <div className="relative flex flex-col items-center gap-6">
-            {/* Placeholder del vídeo en loop de la funda girando (§5.2; asset de
-                producción pendiente). Mock CSS con doble bisel — nunca WebGL aquí (§14). */}
-            <div aria-hidden className="rounded-[32px] bg-white/15 p-2 shadow-lg">
-              <div className="relative h-48 w-[7.5rem] overflow-hidden rounded-[24px] border border-white/40 bg-gradient-to-br from-pink-200 via-pink-300 to-pink-500 shadow-[inset_0_1px_1px_rgba(255,255,255,0.35)]">
-                <span className="absolute left-2 top-2 h-10 w-10 rounded-[12px] bg-white/35" />
-                <span className="absolute left-1/2 top-[4.2rem] -translate-x-1/2 text-3xl">🎀</span>
-                <span className="absolute left-4 top-[7.4rem] text-2xl">💖</span>
-                <span className="absolute right-3 top-[8.6rem] rotate-12 text-xl">⭐</span>
-                <span className="absolute bottom-3 left-1/2 -translate-x-1/2 text-lg">🍓</span>
-                <span className="absolute -left-8 top-0 h-full w-8 rotate-12 bg-white/25 blur-sm" />
-              </div>
-            </div>
-            <h1 className="font-display text-3xl font-bold text-white drop-shadow-sm">
-              {heroClaim ?? t('common.claim')}
-            </h1>
-            <HomeCta label={t('home.ctaPrincipal')} />
-          </div>
-        </section>
+    <PageShell>
+      {/* Hero (SS6.1): el CTA es el elemento dominante de la pagina */}
+      <section className="relative -mt-14 flex max-h-[85svh] min-h-[560px] flex-col items-center justify-end overflow-hidden pb-12 pt-14">
+        <div className="absolute inset-x-0 top-0 h-[55%]">
+          <Image
+            src="/renders/hero.webp"
+            alt={t('home.heroAlt')}
+            fill
+            priority
+            sizes="100vw"
+            className="object-cover object-center"
+          />
+          <div
+            aria-hidden
+            className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-bg"
+          />
+        </div>
+        <div className="relative mt-[42svh] flex flex-col items-center gap-4 px-6 text-center">
+          <h1 className="max-w-xl font-display text-[32px] font-semibold leading-tight text-text sm:text-[40px]">
+            {settings?.heroClaim ?? t('home.claim')}
+          </h1>
+          <p className="max-w-md text-[14px] text-text-soft">{t('home.subtitulo')}</p>
+          <HeroCta />
+        </div>
+      </section>
 
-        {/* 3. Carrusel de preestablecidos */}
-        {presets.length > 0 && (
-          <section className="mt-10">
-            <h2 className="mb-4">{t('home.carruselTitulo')}</h2>
-            <div className="flex snap-x gap-4 overflow-x-auto pb-2">
-              {presets.map((p) => (
-                <Link key={p.slug} href={`/disenos/${p.slug}`} className="snap-start">
-                  <Card interactive className="w-44 shrink-0">
-                    <div className="mb-2 flex aspect-square items-center justify-center rounded-thumb bg-pink-100 text-4xl">
-                      🎀
-                    </div>
-                    <p className="truncate font-bold">{p.nombre}</p>
-                    <p className="font-display text-pink-600">{formatCentimos(p.precioCentimos)}</p>
-                  </Card>
-                </Link>
-              ))}
+      {/* Disenos destacados (SS6.1.2) */}
+      <section className="mx-auto max-w-5xl px-4 py-10">
+        <div className="mb-4 flex items-baseline justify-between">
+          <h2 className="font-display text-2xl font-semibold text-text">{t('home.destacados')}</h2>
+          <Link href="/disenos" className="text-sm font-medium text-pink-700 hover:underline">
+            {t('common.acciones.verTodos')}
+          </Link>
+        </div>
+        <div className="-mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-2">
+          {presets.map((p, i) => (
+            <div key={p.slug} className="w-[180px] shrink-0 snap-start sm:w-[220px]">
+              <ProductCard
+                href={`/disenos/${p.slug}`}
+                nombre={p.nombre}
+                imageUrl={(p.fotos as string[])[0] ?? null}
+                imageAlt={p.nombre}
+                priceLabel={formatCentimos(p.precioCentimos)}
+                badge={<Badge variant="casa">{t('common.badges.disenoCasa')}</Badge>}
+                priority={i === 0}
+              />
             </div>
-          </section>
-        )}
+          ))}
+        </div>
+      </section>
 
-        {/* 4. Galería de la semana (solo opt-in, §9) */}
-        {gallery.length > 0 && (
-          <section className="mt-10">
-            <h2 className="mb-4">{t('home.galeriaTitulo')}</h2>
-            <div className="grid grid-cols-2 gap-4">
-              {gallery.map((d) => (
-                <Link key={d.id} href={`/d/${d.shareToken}`}>
-                  <Card interactive>
-                    <div className="mb-2 flex aspect-square items-center justify-center overflow-hidden rounded-thumb bg-pink-100">
-                      {d.thumbnailUrl ? (
-                        <img src={d.thumbnailUrl} alt={d.nombre} className="h-full w-full object-cover" />
-                      ) : (
-                        <span className="text-4xl">💖</span>
-                      )}
-                    </div>
-                    <p className="truncate text-sm font-bold">{d.nombre}</p>
-                    <p className="flex items-center gap-1 text-sm text-text-soft">
-                      <Heart size={14} className="fill-pink-500 text-pink-500" /> {d.likesCount}
-                    </p>
-                  </Card>
-                </Link>
-              ))}
-            </div>
-            <div className="mt-4 text-center">
-              <Link href="/galeria" className="font-bold text-pink-600 underline-offset-4 hover:underline">
-                {t('home.verGaleria')}
+      {/* Coleccion de temporada (SS6.1.3, condicional) */}
+      {season && season.elementos.length > 0 && (
+        <section className="bg-pink-100 py-10">
+          <div className="mx-auto max-w-5xl px-4">
+            <div className="mb-4 flex items-baseline justify-between">
+              <h2 className="font-display text-2xl font-semibold text-text">{season.nombre}</h2>
+              <Link
+                href="/editor?tab=temporada"
+                className="text-sm font-medium text-pink-700 hover:underline"
+              >
+                {t('home.temporadaCta')}
               </Link>
             </div>
-          </section>
-        )}
+            <div className="grid grid-cols-4 gap-3">
+              {season.elementos.map((el) => (
+                <div
+                  key={el.slug}
+                  className="flex flex-col items-center gap-2 rounded-card bg-surface p-3 shadow-1"
+                >
+                  <div className="relative aspect-square w-full">
+                    <Image
+                      src={`/renders/elementos/${el.slug}.webp`}
+                      alt={el.nombre}
+                      fill
+                      sizes="(max-width: 640px) 25vw, 160px"
+                      className="object-contain"
+                    />
+                  </div>
+                  <p className="text-center text-xs font-medium text-text-soft">{el.nombre}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
-        {/* 5. Bloque de temporada (solo con colección activa, §4.5) */}
-        {season && (
-          <section className="mt-10">
-            <Link
-              href="/editor?tab=temporada"
-              className="flex items-center justify-between rounded-card bg-pink-500 px-6 py-5 text-white shadow-md transition-shadow hover:shadow-lg"
+      {/* Como funciona (SS6.1.4) */}
+      <section className="mx-auto max-w-5xl px-4 py-10">
+        <h2 className="mb-4 font-display text-2xl font-semibold text-text">
+          {t('home.comoFunciona')}
+        </h2>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {pasos.map((paso, i) => (
+            <div
+              key={paso.titulo}
+              className="overflow-hidden rounded-card border border-border bg-surface shadow-1"
             >
-              <span className="font-display text-lg font-semibold">
-                {t('home.temporadaCta', { nombre: season.nombre })}
-              </span>
-              <span aria-hidden className="text-3xl">
-                {season.emoji}
-              </span>
-            </Link>
-          </section>
-        )}
-
-        {/* 6. Cómo funciona */}
-        <section className="mt-12">
-          <h2 className="mb-6 text-center">{t('home.comoFunciona')}</h2>
-          <div className="grid gap-4 md:grid-cols-3">
-            {[
-              { icon: Smartphone, titulo: t('home.paso1Titulo'), texto: t('home.paso1Texto') },
-              { icon: Sparkles, titulo: t('home.paso2Titulo'), texto: t('home.paso2Texto') },
-              { icon: Palette, titulo: t('home.paso3Titulo'), texto: t('home.paso3Texto') },
-            ].map((paso, i) => (
-              <Card key={i} className="flex flex-col items-center gap-2 text-center">
-                <span className="flex h-14 w-14 items-center justify-center rounded-pill bg-pink-100 text-pink-600">
-                  <paso.icon size={28} strokeWidth={2} />
+              <div className="relative aspect-[4/3] bg-surface-2">
+                <Image
+                  src={paso.img}
+                  alt={paso.alt}
+                  fill
+                  sizes="(max-width: 640px) 100vw, 33vw"
+                  className="object-cover"
+                />
+              </div>
+              <div className="flex gap-3 p-4">
+                <span
+                  aria-hidden
+                  className="tabular flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-pink-100 font-display font-semibold text-pink-700"
+                >
+                  {i + 1}
                 </span>
-                <h3>{paso.titulo}</h3>
-                <p className="text-sm text-text-soft">{paso.texto}</p>
-              </Card>
+                <div>
+                  <h3 className="font-display text-[15px] font-semibold text-text">{paso.titulo}</h3>
+                  <p className="text-sm text-text-soft">{paso.texto}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Galeria 2x2 (SS6.1.5): se oculta con menos de 4 publicados */}
+      {publishedCount >= 4 && (
+        <section className="mx-auto max-w-5xl px-4 py-10">
+          <div className="mb-4 flex items-baseline justify-between">
+            <h2 className="font-display text-2xl font-semibold text-text">
+              {t('home.galeriaTitulo')}
+            </h2>
+            <Link href="/galeria" className="text-sm font-medium text-pink-700 hover:underline">
+              {t('home.explorarGaleria')}
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:max-w-2xl">
+            {galleryItems.map((item) => (
+              <GalleryCard key={item.id} item={item} />
             ))}
           </div>
         </section>
-      </main>
-      <Footer />
+      )}
+
       <CookieBanner />
-    </>
+      <script
+        type="application/ld+json"
+        // JSON-LD Organization (SS22)
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'Organization',
+            name: 'Cute Cases',
+            url: 'https://cute-cases.vercel.app',
+          }),
+        }}
+      />
+    </PageShell>
   );
 }

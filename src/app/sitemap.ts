@@ -1,31 +1,29 @@
 import type { MetadataRoute } from 'next';
 import { prisma } from '@/server/db';
 
-const BASE = 'https://cutecases.es';
+const BASE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://cute-cases.vercel.app';
 
-/** sitemap.xml (§16): páginas públicas + fichas de fundas y preestablecidos. */
+/** sitemap.xml (SS22): solo rutas indexables de SS5.1. */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const staticPages: MetadataRoute.Sitemap = [
-    { url: BASE, changeFrequency: 'weekly', priority: 1 },
-    { url: `${BASE}/modelo`, changeFrequency: 'monthly', priority: 0.8 },
-    { url: `${BASE}/fundas`, changeFrequency: 'weekly', priority: 0.8 },
-    { url: `${BASE}/disenos`, changeFrequency: 'weekly', priority: 0.7 },
-    { url: `${BASE}/galeria`, changeFrequency: 'daily', priority: 0.6 },
-    { url: `${BASE}/legal/privacidad`, changeFrequency: 'yearly', priority: 0.1 },
-    { url: `${BASE}/legal/terminos`, changeFrequency: 'yearly', priority: 0.1 },
-    { url: `${BASE}/legal/cookies`, changeFrequency: 'yearly', priority: 0.1 },
+  const staticRoutes: MetadataRoute.Sitemap = [
+    '',
+    '/modelo',
+    '/fundas',
+    '/disenos',
+    '/galeria',
+    '/legal/privacidad',
+    '/legal/terminos',
+    '/legal/cookies',
+  ].map((path) => ({ url: `${BASE}${path}`, changeFrequency: 'weekly' as const }));
+
+  const [cases, presets] = await Promise.all([
+    prisma.caseBase.findMany({ where: { activo: true }, select: { slug: true } }),
+    prisma.presetDesign.findMany({ where: { publicado: true }, select: { slug: true } }),
+  ]).catch(() => [[], []] as [{ slug: string }[], { slug: string }[]]);
+
+  return [
+    ...staticRoutes,
+    ...cases.map((c) => ({ url: `${BASE}/fundas/${c.slug}`, changeFrequency: 'weekly' as const })),
+    ...presets.map((p) => ({ url: `${BASE}/disenos/${p.slug}`, changeFrequency: 'weekly' as const })),
   ];
-  try {
-    const [cases, presets] = await Promise.all([
-      prisma.caseBase.findMany({ where: { activo: true }, select: { slug: true } }),
-      prisma.presetDesign.findMany({ where: { publicado: true }, select: { slug: true } }),
-    ]);
-    return [
-      ...staticPages,
-      ...cases.map((c) => ({ url: `${BASE}/fundas/${c.slug}`, priority: 0.7 })),
-      ...presets.map((p) => ({ url: `${BASE}/disenos/${p.slug}`, priority: 0.6 })),
-    ];
-  } catch {
-    return staticPages;
-  }
 }

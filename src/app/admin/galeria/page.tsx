@@ -36,13 +36,13 @@ export default function AdminGaleriaPage() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-bold">Galería · Moderación</h1>
+      <h1 className="mb-4 text-xl font-semibold">Galería · Moderación</h1>
 
-      <h2 className="mb-2 font-bold">Reportes pendientes ({data?.reports.length ?? 0})</h2>
+      <h2 className="mb-2 font-semibold">Reportes pendientes ({data?.reports.length ?? 0})</h2>
       <AdminTable headers={['Diseño', 'Motivo', 'Fecha', '']}>
         {data?.reports.map((r) => (
-          <tr key={r.id} className="border-b border-pink-50">
-            <td className="px-3 py-2 font-bold">{r.design.nombre}</td>
+          <tr key={r.id} className="border-b border-border">
+            <td className="px-3 py-2 font-semibold">{r.design.nombre}</td>
             <td className="px-3 py-2">{r.motivo ?? '—'}</td>
             <td className="px-3 py-2">{new Date(r.createdAt).toLocaleString('es-ES')}</td>
             <td className="px-3 py-2 text-right">
@@ -65,11 +65,11 @@ export default function AdminGaleriaPage() {
         ))}
       </AdminTable>
 
-      <h2 className="mb-2 mt-8 font-bold">Publicados</h2>
-      <AdminTable headers={['Diseño', 'Autor', '❤️', '']}>
+      <h2 className="mb-2 mt-8 font-semibold">Publicados</h2>
+      <AdminTable headers={['Diseño', 'Autor', 'Likes', '']}>
         {data?.published.map((d) => (
-          <tr key={d.id} className="border-b border-pink-50">
-            <td className="px-3 py-2 font-bold">{d.nombre}</td>
+          <tr key={d.id} className="border-b border-border">
+            <td className="px-3 py-2 font-semibold">{d.nombre}</td>
             <td className="px-3 py-2">{d.user?.email ?? '—'}</td>
             <td className="px-3 py-2">{d.likesCount}</td>
             <td className="px-3 py-2 text-right">

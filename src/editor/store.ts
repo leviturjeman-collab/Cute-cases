@@ -1,179 +1,178 @@
 'use client';
 
 import { create } from 'zustand';
-import type { ElementInstance } from '@/lib/collision';
+import type { PlacedItem } from '@/lib/collision';
+import type { CaseVariantSpec, EditorStatus } from './types';
 
 /**
- * Estado del editor con historial de deshacer/rehacer (§6.8): mínimo 20
- * acciones (guardamos 50). Cada acción (añadir, mover, rotar, eliminar,
- * sustituir, lote de letras, cambio de variante) es UNA entrada.
+ * Store del editor (contrato SS7.2). Toda mutacion de items pasa por acciones
+ * que registran la entrada inversa en history (>= 20 pasos; guardamos 50).
+ * pricing se deriva con selector memoizado fuera del store (usePricing).
  */
 
 interface Snapshot {
-  instances: ElementInstance[];
-  caseVariantId: string;
+  items: PlacedItem[];
+  variantId: string;
 }
 
 const HISTORY_LIMIT = 50;
 
 interface EditorStore {
   designId: string | null;
+  serverUpdatedAt: string | null;
   nombre: string;
   deviceId: string | null;
-  caseVariantId: string;
-  instances: ElementInstance[];
+  variantId: string;
+  items: PlacedItem[];
   selectedId: string | null;
-  past: Snapshot[];
-  future: Snapshot[];
-  /** Snapshot al inicio de un gesto (drag/rotación) para commit/revert. */
+  status: EditorStatus;
+  history: { past: Snapshot[]; future: Snapshot[] };
   gestureStart: Snapshot | null;
   dirty: boolean;
 
   init(state: {
     designId: string | null;
+    serverUpdatedAt?: string | null;
     nombre: string;
     deviceId: string;
-    caseVariantId: string;
-    instances: ElementInstance[];
+    variantId: string;
+    items: PlacedItem[];
   }): void;
+  setStatus(status: EditorStatus): void;
   setNombre(nombre: string): void;
-  setDesignId(id: string): void;
+  setSaved(designId: string, serverUpdatedAt: string): void;
   select(id: string | null): void;
 
-  /** Acciones con historial */
-  addInstance(inst: ElementInstance): void;
-  addBatch(insts: ElementInstance[]): void;
-  removeInstance(id: string): void;
-  replaceInstance(id: string, next: ElementInstance): void;
-  setVariant(caseVariantId: string): void;
+  addItem(item: PlacedItem): void;
+  addBatch(items: PlacedItem[]): void;
+  removeItem(id: string): void;
+  replaceItem(id: string, next: PlacedItem): void;
+  setVariant(variant: CaseVariantSpec): void;
 
-  /** Gestos en vivo (sin historial hasta commit) */
   beginGesture(): void;
-  updateInstanceLive(id: string, patch: Partial<Pick<ElementInstance, 'xMm' | 'yMm' | 'rotacionGrados'>>): void;
+  updateItemLive(id: string, patch: Partial<Pick<PlacedItem, 'xMm' | 'yMm' | 'rotationDeg'>>): void;
   commitGesture(): void;
   cancelGesture(): void;
 
   undo(): void;
   redo(): void;
-  markSaved(): void;
 }
 
-function snapshot(s: Pick<EditorStore, 'instances' | 'caseVariantId'>): Snapshot {
-  return { instances: s.instances.map((i) => ({ ...i })), caseVariantId: s.caseVariantId };
+function snap(s: Pick<EditorStore, 'items' | 'variantId'>): Snapshot {
+  return { items: s.items.map((i) => ({ ...i })), variantId: s.variantId };
 }
 
-function pushPast(s: EditorStore, snap: Snapshot): Pick<EditorStore, 'past' | 'future' | 'dirty'> {
+function push(s: EditorStore, entry: Snapshot) {
   return {
-    past: [...s.past.slice(-(HISTORY_LIMIT - 1)), snap],
-    future: [],
+    history: {
+      past: [...s.history.past.slice(-(HISTORY_LIMIT - 1)), entry],
+      future: [],
+    },
     dirty: true,
   };
 }
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
   designId: null,
+  serverUpdatedAt: null,
   nombre: 'Mi funda',
   deviceId: null,
-  caseVariantId: '',
-  instances: [],
+  variantId: '',
+  items: [],
   selectedId: null,
-  past: [],
-  future: [],
+  status: 'loading-assets',
+  history: { past: [], future: [] },
   gestureStart: null,
   dirty: false,
 
   init: (state) =>
     set({
       designId: state.designId,
+      serverUpdatedAt: state.serverUpdatedAt ?? null,
       nombre: state.nombre,
       deviceId: state.deviceId,
-      caseVariantId: state.caseVariantId,
-      instances: state.instances,
+      variantId: state.variantId,
+      items: state.items,
       selectedId: null,
-      past: [],
-      future: [],
+      history: { past: [], future: [] },
       gestureStart: null,
       dirty: false,
     }),
 
-  setNombre: (nombre) => set({ nombre, dirty: true }),
-  setDesignId: (id) => set({ designId: id }),
+  setStatus: (status) => set({ status }),
+  setNombre: (nombre) => set({ nombre: nombre.slice(0, 40), dirty: true }),
+  setSaved: (designId, serverUpdatedAt) => set({ designId, serverUpdatedAt, dirty: false }),
   select: (selectedId) => set({ selectedId }),
 
-  addInstance: (inst) =>
+  addItem: (item) =>
     set((s) => ({
-      ...pushPast(s as EditorStore, snapshot(s)),
-      instances: [...s.instances, inst],
-      selectedId: inst.instanceId,
+      ...push(s as EditorStore, snap(s)),
+      items: [...s.items, item],
+      selectedId: item.instanceId,
     })),
 
-  addBatch: (insts) =>
+  addBatch: (items) =>
     set((s) => ({
-      ...pushPast(s as EditorStore, snapshot(s)),
-      instances: [...s.instances, ...insts],
+      ...push(s as EditorStore, snap(s)),
+      items: [...s.items, ...items],
     })),
 
-  removeInstance: (id) =>
+  removeItem: (id) =>
     set((s) => ({
-      ...pushPast(s as EditorStore, snapshot(s)),
-      instances: s.instances.filter((i) => i.instanceId !== id),
+      ...push(s as EditorStore, snap(s)),
+      items: s.items.filter((i) => i.instanceId !== id),
       selectedId: s.selectedId === id ? null : s.selectedId,
     })),
 
-  replaceInstance: (id, next) =>
+  replaceItem: (id, next) =>
     set((s) => ({
-      ...pushPast(s as EditorStore, snapshot(s)),
-      instances: s.instances.map((i) => (i.instanceId === id ? next : i)),
+      ...push(s as EditorStore, snap(s)),
+      items: s.items.map((i) => (i.instanceId === id ? next : i)),
       selectedId: next.instanceId,
     })),
 
-  setVariant: (caseVariantId) =>
+  setVariant: (variant) =>
     set((s) => ({
-      ...pushPast(s as EditorStore, snapshot(s)),
-      caseVariantId,
+      ...push(s as EditorStore, snap(s)),
+      variantId: variant.id,
     })),
 
   beginGesture: () => {
     const s = get();
-    if (!s.gestureStart) set({ gestureStart: snapshot(s) });
+    if (!s.gestureStart) set({ gestureStart: snap(s) });
   },
 
-  updateInstanceLive: (id, patch) =>
+  updateItemLive: (id, patch) =>
     set((s) => ({
-      instances: s.instances.map((i) => (i.instanceId === id ? { ...i, ...patch } : i)),
+      items: s.items.map((i) => (i.instanceId === id ? { ...i, ...patch } : i)),
     })),
 
   commitGesture: () => {
     const s = get();
     if (!s.gestureStart) return;
     const changed =
-      JSON.stringify(s.gestureStart.instances) !== JSON.stringify(s.instances) ||
-      s.gestureStart.caseVariantId !== s.caseVariantId;
+      JSON.stringify(s.gestureStart.items) !== JSON.stringify(s.items) ||
+      s.gestureStart.variantId !== s.variantId;
     set({
       gestureStart: null,
-      ...(changed ? pushPast(s, s.gestureStart) : {}),
+      ...(changed ? push(s, s.gestureStart) : {}),
     });
   },
 
   cancelGesture: () => {
     const s = get();
     if (!s.gestureStart) return;
-    set({
-      instances: s.gestureStart.instances,
-      caseVariantId: s.gestureStart.caseVariantId,
-      gestureStart: null,
-    });
+    set({ items: s.gestureStart.items, variantId: s.gestureStart.variantId, gestureStart: null });
   },
 
   undo: () => {
     const s = get();
-    const prev = s.past[s.past.length - 1];
+    const prev = s.history.past[s.history.past.length - 1];
     if (!prev) return;
     set({
-      past: s.past.slice(0, -1),
-      future: [...s.future, snapshot(s)],
-      instances: prev.instances,
-      caseVariantId: prev.caseVariantId,
+      history: { past: s.history.past.slice(0, -1), future: [...s.history.future, snap(s)] },
+      items: prev.items,
+      variantId: prev.variantId,
       selectedId: null,
       dirty: true,
     });
@@ -181,25 +180,21 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   redo: () => {
     const s = get();
-    const next = s.future[s.future.length - 1];
+    const next = s.history.future[s.history.future.length - 1];
     if (!next) return;
     set({
-      future: s.future.slice(0, -1),
-      past: [...s.past, snapshot(s)],
-      instances: next.instances,
-      caseVariantId: next.caseVariantId,
+      history: { past: [...s.history.past, snap(s)], future: s.history.future.slice(0, -1) },
+      items: next.items,
+      variantId: next.variantId,
       selectedId: null,
       dirty: true,
     });
   },
-
-  markSaved: () => set({ dirty: false }),
 }));
 
-let instanceCounter = 0;
+let counter = 0;
 
-/** id local de instancia único dentro de la sesión del editor. */
 export function newInstanceId(): string {
-  instanceCounter += 1;
-  return `i-${Date.now().toString(36)}-${instanceCounter}`;
+  counter += 1;
+  return `i${Date.now().toString(36)}${counter}`;
 }

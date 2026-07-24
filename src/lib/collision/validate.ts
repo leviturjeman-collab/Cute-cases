@@ -1,114 +1,153 @@
-import { pointInRoundedRect, transformPolygon } from './geometry';
-import { polygonsCollide } from './sat';
-import type {
-  CaseGeometry,
-  ElementInstance,
-  ElementShape,
-  InvalidReason,
-  PlacementResult,
-  Polygon,
+import {
+  aabbOverlap,
+  inflateConvexPolygon,
+  pointInPolygon,
+  polygonAABB,
+  roundedRectPolygon,
+  segmentsIntersect,
+  transformPolygon,
+} from './geometry';
+import { hitboxesCollide } from './sat';
+import {
+  CAMERA_INFLATE_MM,
+  DEFAULT_MARGIN_MM,
+  type AABB,
+  type DeviceSpec,
+  type ElementShape,
+  type PlacedItem,
+  type Polygon,
+  type ValidationResult,
 } from './types';
-import { DEFAULT_SAFETY_MARGIN_MM } from './types';
 
 /**
- * Reglas de validez de una posición (§6.6) — las TRES deben cumplirse:
- *  1. Sin solapamiento con la hitbox (rotada) de ningún otro elemento (margen configurable).
- *  2. Sin intersección con el polígono de la zona de cámara.
- *  3. Contención total dentro del contorno de la funda (rect. redondeado).
+ * Algoritmo canonico esValida (SS8.3):
+ *  1) contencion: cada vertice de P dentro del contorno y ninguna arista de P
+ *     interseca el contorno -> FUERA_DE_FUNDA
+ *  2) camara: SAT(P, zonaCamaraInflada) -> SOBRE_CAMARA
+ *  3) pares: broad-phase AABB (inflado margen) + SAT con margen -> SOLAPA(refs)
  */
 
-export function getWorldHitbox(instance: ElementInstance, shape: ElementShape): Polygon {
-  return transformPolygon(shape.hitbox, instance.xMm, instance.yMm, instance.rotacionGrados);
+export interface SceneContext {
+  contour: Polygon;
+  contourAABB: AABB;
+  cameraInflated: Polygon;
+  marginMm: number;
 }
 
-/** Regla 3: contención total. La funda es convexa → basta comprobar los vértices. */
-export function isInsideCase(worldHitbox: Polygon, geometry: CaseGeometry): boolean {
-  return worldHitbox.every((p) =>
-    pointInRoundedRect(p, geometry.anchoMm, geometry.altoMm, geometry.radioEsquinaMm),
-  );
-}
-
-/** Valida la posición de UNA instancia frente al resto, la cámara y el contorno. */
-export function validatePlacement(
-  instance: ElementInstance,
-  others: ElementInstance[],
-  shapes: ReadonlyMap<string, ElementShape>,
-  geometry: CaseGeometry,
-  marginMm: number = DEFAULT_SAFETY_MARGIN_MM,
-): PlacementResult {
-  const shape = shapes.get(instance.elementId);
-  if (!shape) return { valid: false, reasons: [{ type: 'out-of-bounds' }] };
-
-  const world = getWorldHitbox(instance, shape);
-  const reasons: InvalidReason[] = [];
-
-  if (!isInsideCase(world, geometry)) {
-    reasons.push({ type: 'out-of-bounds' });
-  }
-  if (geometry.cameraZone.length >= 3 && polygonsCollide(world, geometry.cameraZone, 0)) {
-    reasons.push({ type: 'camera' });
-  }
-  for (const other of others) {
-    if (other.instanceId === instance.instanceId) continue;
-    const otherShape = shapes.get(other.elementId);
-    if (!otherShape) continue;
-    const otherWorld = getWorldHitbox(other, otherShape);
-    if (polygonsCollide(world, otherWorld, marginMm)) {
-      reasons.push({ type: 'overlap', otherInstanceId: other.instanceId });
-    }
-  }
-  return { valid: reasons.length === 0, reasons };
-}
-
-/**
- * Valida un diseño COMPLETO (todas las instancias). Usado por el servidor en
- * cada guardado/añadido a cesta (§12.5) y por el cliente al cargar un diseño.
- * Devuelve un mapa instanceId → razones (vacío si todo es válido).
- */
-export function validateDesign(
-  instances: ElementInstance[],
-  shapes: ReadonlyMap<string, ElementShape>,
-  geometry: CaseGeometry,
-  marginMm: number = DEFAULT_SAFETY_MARGIN_MM,
-): Map<string, InvalidReason[]> {
-  const invalid = new Map<string, InvalidReason[]>();
-  const worlds = new Map<string, Polygon>();
-  for (const inst of instances) {
-    const shape = shapes.get(inst.elementId);
-    if (!shape) {
-      invalid.set(inst.instanceId, [{ type: 'out-of-bounds' }]);
-      continue;
-    }
-    worlds.set(inst.instanceId, getWorldHitbox(inst, shape));
-  }
-
-  const add = (id: string, reason: InvalidReason) => {
-    const list = invalid.get(id) ?? [];
-    list.push(reason);
-    invalid.set(id, list);
+/** Precalcula el contexto de escena de un dispositivo (contorno + camara inflada). */
+export function buildSceneContext(device: DeviceSpec, marginMm: number = DEFAULT_MARGIN_MM): SceneContext {
+  const contour = roundedRectPolygon(device.anchoMm, device.altoMm, device.radioEsquinaMm);
+  return {
+    contour,
+    contourAABB: polygonAABB(contour),
+    cameraInflated:
+      device.cameraZone.length >= 3
+        ? inflateConvexPolygon(device.cameraZone, CAMERA_INFLATE_MM)
+        : [],
+    marginMm,
   };
+}
 
-  for (const inst of instances) {
-    const world = worlds.get(inst.instanceId);
-    if (!world) continue;
-    if (!isInsideCase(world, geometry)) add(inst.instanceId, { type: 'out-of-bounds' });
-    if (geometry.cameraZone.length >= 3 && polygonsCollide(world, geometry.cameraZone, 0)) {
-      add(inst.instanceId, { type: 'camera' });
+/** Hitbox transformada de un item (rotacion + traslacion). */
+export function worldHitbox(item: PlacedItem, shape: ElementShape): Polygon[] {
+  return shape.hitbox.map((poly) => transformPolygon(poly, item.xMm, item.yMm, item.rotationDeg));
+}
+
+/** Regla 1: contencion total dentro del contorno. */
+function isContained(world: Polygon[], ctx: SceneContext): boolean {
+  for (const poly of world) {
+    for (const p of poly) {
+      if (!pointInPolygon(p, ctx.contour)) return false;
     }
-  }
-
-  for (let i = 0; i < instances.length; i++) {
-    for (let j = i + 1; j < instances.length; j++) {
-      const a = instances[i]!;
-      const b = instances[j]!;
-      const wa = worlds.get(a.instanceId);
-      const wb = worlds.get(b.instanceId);
-      if (!wa || !wb) continue;
-      if (polygonsCollide(wa, wb, marginMm)) {
-        add(a.instanceId, { type: 'overlap', otherInstanceId: b.instanceId });
-        add(b.instanceId, { type: 'overlap', otherInstanceId: a.instanceId });
+    // Ninguna arista de P interseca el contorno (SS8.3)
+    const n = poly.length;
+    const m = ctx.contour.length;
+    for (let i = 0; i < n; i++) {
+      const a1 = poly[i]!;
+      const a2 = poly[(i + 1) % n]!;
+      for (let j = 0; j < m; j++) {
+        if (segmentsIntersect(a1, a2, ctx.contour[j]!, ctx.contour[(j + 1) % m]!)) return false;
       }
     }
   }
-  return invalid;
+  return true;
+}
+
+/** Valida la pose de UN item frente al contexto y al resto de la escena. */
+export function esValida(
+  item: PlacedItem,
+  others: PlacedItem[],
+  shapes: ReadonlyMap<string, ElementShape>,
+  ctx: SceneContext,
+): ValidationResult {
+  const shape = shapes.get(item.elementId);
+  if (!shape) return { valida: false, motivo: 'FUERA_DE_FUNDA' };
+
+  const world = worldHitbox(item, shape);
+
+  if (!isContained(world, ctx)) {
+    return { valida: false, motivo: 'FUERA_DE_FUNDA' };
+  }
+
+  if (ctx.cameraInflated.length >= 3 && hitboxesCollide(world, [ctx.cameraInflated], 0)) {
+    return { valida: false, motivo: 'SOBRE_CAMARA' };
+  }
+
+  const worldAABBs = world.map(polygonAABB);
+  const refs: string[] = [];
+  for (const other of others) {
+    if (other.instanceId === item.instanceId) continue;
+    const otherShape = shapes.get(other.elementId);
+    if (!otherShape) continue;
+    const otherWorld = worldHitbox(other, otherShape);
+    const otherAABBs = otherWorld.map(polygonAABB);
+    // Broad-phase por AABB inflada con el margen (SS8.3)
+    let broadHit = false;
+    for (const a of worldAABBs) {
+      for (const b of otherAABBs) {
+        if (aabbOverlap(a, b, ctx.marginMm)) {
+          broadHit = true;
+          break;
+        }
+      }
+      if (broadHit) break;
+    }
+    if (!broadHit) continue;
+    if (hitboxesCollide(world, otherWorld, ctx.marginMm)) {
+      refs.push(other.instanceId);
+    }
+  }
+  if (refs.length > 0) return { valida: false, motivo: 'SOLAPA', refs };
+  return { valida: true };
+}
+
+/**
+ * validarEscena (SS8.3): mapa de validez por instancia. Usado por el servidor
+ * en cada guardado y por el seed de preestablecidos.
+ */
+export function validarEscena(
+  items: PlacedItem[],
+  shapes: ReadonlyMap<string, ElementShape>,
+  device: DeviceSpec,
+  marginMm: number = DEFAULT_MARGIN_MM,
+): Map<string, ValidationResult> {
+  const ctx = buildSceneContext(device, marginMm);
+  const result = new Map<string, ValidationResult>();
+  for (const item of items) {
+    result.set(item.instanceId, esValida(item, items, shapes, ctx));
+  }
+  return result;
+}
+
+/** true si toda la escena es valida. */
+export function escenaValida(
+  items: PlacedItem[],
+  shapes: ReadonlyMap<string, ElementShape>,
+  device: DeviceSpec,
+  marginMm: number = DEFAULT_MARGIN_MM,
+): boolean {
+  for (const r of validarEscena(items, shapes, device, marginMm).values()) {
+    if (!r.valida) return false;
+  }
+  return true;
 }

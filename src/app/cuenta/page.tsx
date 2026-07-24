@@ -1,109 +1,223 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { useQuery } from '@tanstack/react-query';
 import { signOut, useSession } from 'next-auth/react';
-import { Header } from '@/components/layout/Header';
-import { Footer } from '@/components/layout/Footer';
-import { Button, Card, Modal, Skeleton, useToast } from '@/components/ui';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
-import { forgetDevice } from '@/lib/deviceStorage';
+import { forgetDevice, rememberDevice } from '@/lib/deviceStorage';
+import { PageShell } from '@/components/layout/PageShell';
+import { Button, Input, Modal, Skeleton, useToast } from '@/components/ui';
 
-interface AccountData {
+interface Me {
   email: string;
   nombre: string | null;
   provider: string;
-  device: { id: string; nombre: string } | null;
   emailVerificado: boolean;
+  device: { id: string; nombre: string } | null;
+  autorVisible: boolean;
 }
 
-/** Ajustes de cuenta (§7.4): datos, mi iPhone, logout, eliminar cuenta. */
+/** Cuenta (SS6.7): perfil, dispositivo, privacidad, sesion y zona de peligro. */
 export default function CuentaPage() {
   const t = useTranslations();
   const router = useRouter();
   const { status } = useSession();
   const { showToast } = useToast();
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const queryClient = useQueryClient();
 
-  const { data } = useQuery({
-    queryKey: ['account'],
-    queryFn: () => api<AccountData>('/api/account'),
+  const [nombre, setNombre] = useState('');
+  const [autorVisible, setAutorVisible] = useState(true);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteWord, setDeleteWord] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  useEffect(() => {
+    if (status === 'unauthenticated') router.replace('/login?next=%2Fcuenta');
+  }, [status, router]);
+
+  const { data: me, isPending } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api<Me>('/api/me'),
     enabled: status === 'authenticated',
   });
 
-  if (status === 'unauthenticated') {
-    router.replace('/login?next=/cuenta');
-    return null;
-  }
+  useEffect(() => {
+    if (me) {
+      setNombre(me.nombre ?? '');
+      setAutorVisible(me.autorVisible);
+      if (me.device) rememberDevice(me.device);
+    }
+  }, [me]);
 
-  const deleteAccount = async () => {
-    setDeleting(true);
+  const saveNombre = async () => {
     try {
-      await api('/api/account', { method: 'DELETE' });
-      forgetDevice();
-      await signOut({ callbackUrl: '/' });
+      await api('/api/me', { method: 'PATCH', body: JSON.stringify({ nombre: nombre.trim() || null }) });
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
+      showToast(t('toasts.T01'), 'success');
     } catch {
-      showToast(t('toasts.E15'), 'error');
-      setDeleting(false);
+      showToast(t('toasts.T15'), 'error');
     }
   };
 
+  const toggleAutor = async () => {
+    const next = !autorVisible;
+    setAutorVisible(next);
+    try {
+      await api('/api/me', { method: 'PATCH', body: JSON.stringify({ autorVisible: next }) });
+    } catch {
+      setAutorVisible(!next);
+      showToast(t('toasts.T15'), 'error');
+    }
+  };
+
+  const deleteAccount = async () => {
+    setDeleteBusy(true);
+    try {
+      await api('/api/me', { method: 'DELETE' });
+      forgetDevice();
+      showToast(t('toasts.T23'), 'success');
+      await signOut({ callbackUrl: '/' });
+    } catch {
+      showToast(t('toasts.T15'), 'error');
+      setDeleteBusy(false);
+    }
+  };
+
+  if (status !== 'authenticated' || isPending || !me) {
+    return (
+      <PageShell>
+        <div className="mx-auto max-w-lg space-y-4 px-4 py-8">
+          <Skeleton className="h-8 w-40" />
+          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      </PageShell>
+    );
+  }
+
   return (
-    <>
-      <Header />
-      <main className="mx-auto max-w-xl px-4 pt-6">
-        <h1 className="mb-4">{t('cuenta.titulo')}</h1>
-        {!data ? (
-          <Skeleton className="h-48 w-full" />
-        ) : (
-          <div className="flex flex-col gap-4">
-            {!data.emailVerificado && (
-              <p className="rounded-thumb bg-pink-200 px-4 py-3 text-sm font-bold">
-                {t('cuenta.verificaEmail')}
+    <PageShell>
+      <div className="mx-auto max-w-lg px-4 py-8">
+        <h1 className="font-display text-[28px] font-semibold text-text">{t('cuenta.titulo')}</h1>
+
+        {/* Perfil */}
+        <section className="mt-6 rounded-card border border-border bg-surface p-4">
+          <h2 className="font-display text-[15px] font-semibold text-text">{t('cuenta.perfil')}</h2>
+          <div className="mt-3 space-y-3">
+            <Input
+              label={t('auth.nombre')}
+              value={nombre}
+              maxLength={60}
+              placeholder={t('cuenta.nombrePlaceholder')}
+              onChange={(e) => setNombre(e.target.value)}
+              onBlur={() => void saveNombre()}
+            />
+            <div>
+              <p className="text-[13px] font-medium text-text">{t('auth.email')}</p>
+              <p className="mt-1 text-[15px] text-text-soft">{me.email}</p>
+            </div>
+            <div>
+              <p className="text-[13px] font-medium text-text">{t('cuenta.metodoAcceso')}</p>
+              <p className="mt-1 text-[15px] text-text-soft">
+                {me.provider === 'credentials' ? t('cuenta.accesoEmail') : me.provider}
               </p>
-            )}
-            <Card>
-              <p className="font-bold">{data.nombre ?? '—'}</p>
-              <p className="text-sm text-text-soft">{data.email}</p>
-              <p className="mt-1 text-xs text-text-soft">
-                {t('cuenta.metodoLogin')}: {data.provider}
-              </p>
-            </Card>
-            <Card className="flex items-center justify-between">
-              <div>
-                <p className="font-bold">{t('cuenta.miIphone')}</p>
-                <p className="text-sm text-text-soft">{data.device?.nombre ?? '—'}</p>
-              </div>
-              <Button size="sm" variant="secondary" onClick={() => router.push('/modelo')}>
-                {t('common.acciones.cambiar')}
-              </Button>
-            </Card>
-            <Button variant="secondary" onClick={() => void signOut({ callbackUrl: '/' })}>
-              {t('cuenta.cerrarSesion')}
-            </Button>
-            <Button variant="danger" onClick={() => setDeleteOpen(true)}>
-              {t('cuenta.eliminarCuenta')}
+            </div>
+          </div>
+        </section>
+
+        {/* Mi dispositivo */}
+        <section className="mt-4 rounded-card border border-border bg-surface p-4">
+          <h2 className="font-display text-[15px] font-semibold text-text">
+            {t('cuenta.miDispositivo')}
+          </h2>
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <p className="text-[15px] text-text-soft">
+              {me.device?.nombre ?? t('cuenta.sinDispositivo')}
+            </p>
+            <Button variant="secondary" onClick={() => router.push('/modelo?volver=%2Fcuenta')}>
+              {t('common.acciones.cambiar')}
             </Button>
           </div>
-        )}
-      </main>
+        </section>
 
-      {/* Eliminación self-service — derecho de supresión (§13) */}
+        {/* Privacidad */}
+        <section className="mt-4 rounded-card border border-border bg-surface p-4">
+          <h2 className="font-display text-[15px] font-semibold text-text">
+            {t('cuenta.privacidad')}
+          </h2>
+          <label className="mt-3 flex cursor-pointer items-center justify-between gap-3">
+            <span className="text-[15px] text-text">{t('cuenta.autorVisible')}</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autorVisible}
+              onClick={() => void toggleAutor()}
+              className={`relative h-6 w-11 rounded-badge transition-colors duration-120 ${
+                autorVisible ? 'bg-pink-700' : 'bg-border'
+              }`}
+            >
+              <span
+                aria-hidden
+                className={`absolute top-0.5 h-5 w-5 rounded-badge bg-white shadow-1 transition-all duration-120 ${
+                  autorVisible ? 'left-[22px]' : 'left-0.5'
+                }`}
+              />
+            </button>
+          </label>
+          <p className="mt-2 text-sm text-text-soft">{t('galeria.anonimo')}</p>
+        </section>
+
+        {/* Sesion */}
+        <section className="mt-4 rounded-card border border-border bg-surface p-4">
+          <h2 className="font-display text-[15px] font-semibold text-text">{t('cuenta.sesion')}</h2>
+          <Button
+            variant="secondary"
+            className="mt-3"
+            onClick={() => void signOut({ callbackUrl: '/' })}
+          >
+            {t('cuenta.cerrarSesion')}
+          </Button>
+        </section>
+
+        {/* Zona de peligro */}
+        <section className="mt-4 rounded-card border border-error/40 bg-surface p-4">
+          <h2 className="font-display text-[15px] font-semibold text-error">
+            {t('cuenta.zonaPeligro')}
+          </h2>
+          <p className="mt-2 text-sm text-text-soft">{t('cuenta.eliminarAviso')}</p>
+          <Button variant="danger" className="mt-3" onClick={() => setDeleteOpen(true)}>
+            {t('cuenta.eliminarCuenta')}
+          </Button>
+        </section>
+      </div>
+
+      {/* Confirmacion con escritura de ELIMINAR (SS6.7) */}
       <Modal open={deleteOpen} onClose={() => setDeleteOpen(false)} title={t('cuenta.eliminarCuenta')}>
-        <p className="mb-4 text-sm text-text-soft">{t('cuenta.eliminarAviso')}</p>
-        <div className="flex gap-2">
-          <Button variant="danger" loading={deleting} onClick={() => void deleteAccount()}>
-            {t('cuenta.eliminarConfirma')}
-          </Button>
-          <Button variant="secondary" onClick={() => setDeleteOpen(false)}>
-            {t('common.acciones.cancelar')}
-          </Button>
+        <div className="space-y-4">
+          <p className="text-sm text-text-soft">{t('cuenta.eliminarAviso')}</p>
+          <Input
+            label={t('cuenta.eliminarEscribe')}
+            value={deleteWord}
+            onChange={(e) => setDeleteWord(e.target.value)}
+            autoComplete="off"
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeleteOpen(false)}>
+              {t('common.acciones.cancelar')}
+            </Button>
+            <Button
+              variant="danger"
+              disabled={deleteWord.trim().toUpperCase() !== 'ELIMINAR'}
+              loading={deleteBusy}
+              onClick={() => void deleteAccount()}
+            >
+              {t('common.acciones.eliminar')}
+            </Button>
+          </div>
         </div>
       </Modal>
-      <Footer />
-    </>
+    </PageShell>
   );
 }

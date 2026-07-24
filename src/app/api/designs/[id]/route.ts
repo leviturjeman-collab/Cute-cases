@@ -11,7 +11,7 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-/** GET /api/designs/[id] — cargar un diseño propio para retomarlo en el editor. */
+/** GET /api/designs/[id]: diseno propio con disponibilidad (editor). */
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
@@ -23,25 +23,45 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   }
 }
 
-/** PUT /api/designs/[id] — actualizar (owner). Last-write-wins (§6.9). */
+/**
+ * PUT /api/designs/[id] (SS13.2): actualiza con la misma validacion.
+ * Concurrencia: updatedAt recibido < servidor -> 409 DESIGN_CONFLICT (T-19).
+ */
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    await requireDesignOwner(params.id, user.id);
+    const existing = await requireDesignOwner(params.id, user.id);
 
     const body: unknown = await req.json();
-    // Renombrado inline (solo nombre)
     const renameOnly = renameSchema.safeParse(body);
     const full = designPayloadSchema.safeParse(body);
 
-    if (!full.success && renameOnly.success) {
+    if (
+      !full.success &&
+      renameOnly.success &&
+      (renameOnly.data.nombre !== undefined || renameOnly.data.shareNombre !== undefined)
+    ) {
       const updated = await prisma.design.update({
         where: { id: params.id },
-        data: { nombre: renameOnly.data.nombre },
+        data: {
+          ...(renameOnly.data.nombre !== undefined ? { nombre: renameOnly.data.nombre } : {}),
+          ...(renameOnly.data.shareNombre !== undefined
+            ? { shareNombre: renameOnly.data.shareNombre }
+            : {}),
+        },
       });
       return NextResponse.json(updated);
     }
-    if (!full.success) return apiError('S-03', 'Payload de diseño inválido');
+    if (!full.success) return apiError('VALIDATION', 'Payload de diseno invalido');
+
+    if (full.data.updatedAt) {
+      const clientTime = new Date(full.data.updatedAt).getTime();
+      if (clientTime < existing.updatedAt.getTime()) {
+        return apiError('DESIGN_CONFLICT', 'Version del servidor mas reciente', {
+          updatedAt: existing.updatedAt.toISOString(),
+        });
+      }
+    }
 
     const validated = await validateAndPriceDesign(full.data);
     const updated = await prisma.design.update({
@@ -60,7 +80,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-/** DELETE /api/designs/[id] — eliminar (owner). */
+/** DELETE /api/designs/[id]: dueno. */
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();

@@ -4,14 +4,21 @@ import { apiError, handleApiError } from '@/server/errors';
 
 export const dynamic = 'force-dynamic';
 
-/** GET /api/cases?deviceId= — fundas compatibles activas con variantes (§12.3). */
+/**
+ * GET /api/cases?deviceId= (SS13.1): fundas activas compatibles con al menos
+ * una variante disponible, con sus variantes.
+ */
 export async function GET(req: NextRequest) {
   try {
     const deviceId = req.nextUrl.searchParams.get('deviceId');
-    if (!deviceId) return apiError('S-03', 'deviceId requerido');
+    if (!deviceId) return apiError('VALIDATION', 'deviceId requerido');
 
     const cases = await prisma.caseBase.findMany({
-      where: { activo: true, compat: { some: { deviceId } } },
+      where: {
+        activo: true,
+        compat: { some: { deviceId } },
+        variantes: { some: { disponible: true } },
+      },
       orderBy: [{ destacada: 'desc' }, { nombre: 'asc' }],
       include: { variantes: true },
     });
@@ -23,6 +30,7 @@ export async function GET(req: NextRequest) {
         descripcion: c.descripcion,
         material: c.material,
         fotos: c.fotos,
+        destacada: c.destacada,
         variantes: c.variantes.map((v) => ({
           id: v.id,
           colorNombre: v.colorNombre,

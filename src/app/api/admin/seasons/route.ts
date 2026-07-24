@@ -25,9 +25,9 @@ export async function POST(req: NextRequest) {
   try {
     const admin = await requireAdmin();
     const parsed = seasonSchema.safeParse(await req.json());
-    if (!parsed.success) return apiError('S-03', parsed.error.message);
+    if (!parsed.success) return apiError('VALIDATION', parsed.error.message);
     const season = await prisma.seasonCollection.create({ data: parsed.data });
-    await audit(admin.id, 'crear', 'SeasonCollection', season.id);
+    await audit(admin.id, 'create', 'SeasonCollection', season.id);
     return NextResponse.json(season, { status: 201 });
   } catch (e) {
     return handleApiError(e);

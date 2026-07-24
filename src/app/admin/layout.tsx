@@ -27,9 +27,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (user.rol !== 'admin') redirect('/');
 
   return (
-    <div className="flex min-h-dvh bg-pink-50">
-      <aside className="hidden w-52 shrink-0 border-r border-pink-200 bg-surface p-4 md:block">
-        <Link href="/" className="mb-6 block font-display text-lg font-bold text-pink-700">
+    <div className="flex min-h-dvh bg-surface-2">
+      <aside className="hidden w-52 shrink-0 border-r border-border bg-surface p-4 md:block">
+        <Link href="/" className="mb-6 block font-display text-lg font-semibold text-pink-700">
           Cute Cases · Admin
         </Link>
         <nav className="flex flex-col gap-1">
@@ -37,7 +37,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <Link
               key={s.href}
               href={s.href}
-              className="rounded-thumb px-3 py-2 text-sm font-bold text-text hover:bg-pink-100"
+              className="rounded-thumb px-3 py-2 text-sm font-semibold text-text hover:bg-surface-2"
             >
               {s.label}
             </Link>
@@ -45,12 +45,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </nav>
       </aside>
       <div className="min-w-0 flex-1">
-        <nav className="flex gap-2 overflow-x-auto border-b border-pink-200 bg-surface p-2 md:hidden">
+        <nav className="flex gap-2 overflow-x-auto border-b border-border bg-surface p-2 md:hidden">
           {SECTIONS.map((s) => (
             <Link
               key={s.href}
               href={s.href}
-              className="shrink-0 rounded-pill px-3 py-1.5 text-sm font-bold hover:bg-pink-100"
+              className="shrink-0 rounded-control px-3 py-1.5 text-sm font-semibold hover:bg-surface-2"
             >
               {s.label}
             </Link>

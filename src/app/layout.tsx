@@ -1,22 +1,23 @@
 import type { Metadata, Viewport } from 'next';
-import { Fredoka, Nunito } from 'next/font/google';
+import { Inter, Poppins } from 'next/font/google';
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getMessages, getTranslations } from 'next-intl/server';
 import { Providers } from './providers';
 import '@/styles/globals.css';
 
-const fredoka = Fredoka({
+// Tipografía v4 (§3.3): Poppins 500/600 para marca y títulos, Inter para UI.
+const poppins = Poppins({
   subsets: ['latin'],
-  weight: ['500', '600', '700'],
+  weight: ['500', '600'],
   display: 'swap',
-  variable: '--font-fredoka',
+  variable: '--font-poppins',
 });
 
-const nunito = Nunito({
+const inter = Inter({
   subsets: ['latin'],
-  weight: ['400', '600', '700', '800'],
+  weight: ['400', '500', '600'],
   display: 'swap',
-  variable: '--font-nunito',
+  variable: '--font-inter',
 });
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -36,7 +37,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#FFE4F1',
+  themeColor: '#FDF7FA',
   width: 'device-width',
   initialScale: 1,
 };
@@ -45,7 +46,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const locale = await getLocale();
   const messages = await getMessages();
   return (
-    <html lang={locale} className={`${fredoka.variable} ${nunito.variable}`}>
+    <html lang={locale} className={`${poppins.variable} ${inter.variable}`}>
       <body>
         <NextIntlClientProvider messages={messages}>
           <Providers>{children}</Providers>

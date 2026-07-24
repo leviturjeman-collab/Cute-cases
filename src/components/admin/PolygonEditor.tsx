@@ -50,7 +50,7 @@ export function PolygonEditor({ value, onChange, widthMm, heightMm, centered = f
     <svg
       ref={svgRef}
       viewBox={`0 0 ${VIEW} ${VIEW}`}
-      className="h-72 w-72 touch-none rounded-thumb border-2 border-pink-200 bg-white"
+      className="h-72 w-72 touch-none rounded-thumb border-2 border-border bg-surface"
       onPointerMove={(e) => {
         if (dragIdx === null) return;
         const { x, y } = pointerPos(e);

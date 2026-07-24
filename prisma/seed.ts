@@ -1,614 +1,563 @@
 /**
- * SEEDS DE DESARROLLO de Cute Cases (F1 §19).
- *
- * ⚠️ AVISO IMPORTANTE (§4.1): las dimensiones y zonas de cámara de este seed son
- * APROXIMACIONES para desarrollo. Antes de activar un modelo en PRODUCCIÓN, el
- * admin debe introducir las medidas reales verificadas desde el panel. El código
- * de la aplicación NO lleva dimensiones hardcodeadas: todo sale de la BD.
- *
- * Assets: al no existir aún los GLB/PNG del proveedor, se usa el esquema
- * `procedural://<forma>` que el visor 3D renderiza con geometría procedural.
- * El admin puede sustituirlos por GLB/PNG reales sin tocar código.
+ * SEED v4 (D4, SS11): idempotente (upsert por slug/clave natural).
+ * - Catalogo SIEMPRE: 21 dispositivos, 6 fundas / 19 variantes, 48 elementos
+ *   + 5 de temporada + 2 juegos de letras (74 glifos), 4 preestablecidos.
+ * - El seed VALIDA los 4 preestablecidos con el motor de colisiones y ABORTA
+ *   con error si alguno es invalido, listando el motivo.
+ * - SEED_DEMO_CONTENT=true (por defecto fuera de produccion): usuarios de
+ *   demostracion y disenos publicados en galeria.
+ * Dimensiones de SS11.1: valores de referencia para desarrollo, corregibles
+ * desde el admin; verificar contra especificaciones oficiales antes de vender.
  */
 import { PrismaClient } from '@prisma/client';
+import { rectHitbox, validarEscena, type DeviceSpec, type ElementShape, type Hitbox, type PlacedItem } from '../src/lib/collision';
+import { recipeHitbox } from '../src/lib/silhouettes';
+import { VALID_LETTER_CHARS, glyphWidthMm } from '../src/lib/letters';
 
 const prisma = new PrismaClient();
 
-type Pt = { x: number; y: number };
+const DEMO = (process.env.SEED_DEMO_CONTENT ?? (process.env.NODE_ENV === 'production' ? 'false' : 'true')) === 'true';
 
-// ---------- Helpers de hitbox (polígonos en mm, origen = centro) ----------
-
-function rectHitbox(w: number, h: number): Pt[] {
-  return [
-    { x: -w / 2, y: -h / 2 },
-    { x: w / 2, y: -h / 2 },
-    { x: w / 2, y: h / 2 },
-    { x: -w / 2, y: h / 2 },
-  ];
-}
-
-function circleHitbox(diameter: number, sides = 12): Pt[] {
-  const r = diameter / 2;
-  return Array.from({ length: sides }, (_, i) => {
-    const a = (i / sides) * 2 * Math.PI;
-    return { x: r * Math.cos(a), y: r * Math.sin(a) };
-  });
-}
-
-/** Corazón simplificado de 12 vértices (§6.6: hitbox de corazón, no bounding box). */
-function heartHitbox(w: number, h: number): Pt[] {
-  const pts: Pt[] = [
-    { x: 0, y: 0.45 },
-    { x: -0.35, y: 0.1 },
-    { x: -0.5, y: -0.15 },
-    { x: -0.45, y: -0.35 },
-    { x: -0.25, y: -0.45 },
-    { x: -0.1, y: -0.38 },
-    { x: 0, y: -0.25 },
-    { x: 0.1, y: -0.38 },
-    { x: 0.25, y: -0.45 },
-    { x: 0.45, y: -0.35 },
-    { x: 0.5, y: -0.15 },
-    { x: 0.35, y: 0.1 },
-  ];
-  return pts.map((p) => ({ x: p.x * w, y: p.y * h }));
-}
-
-/** Estrella de 5 puntas (cóncava, 10 vértices). */
-function starHitbox(size: number): Pt[] {
-  const outer = size / 2;
-  const inner = outer * 0.45;
-  const pts: Pt[] = [];
-  for (let i = 0; i < 10; i++) {
-    const r = i % 2 === 0 ? outer : inner;
-    const a = (i / 10) * 2 * Math.PI - Math.PI / 2;
-    pts.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
-  }
-  return pts;
-}
-
-/** Lazo: dos lóbulos + nudo (octógono ancho simplificado). */
-function bowHitbox(w: number, h: number): Pt[] {
-  const pts: Pt[] = [
-    { x: -0.5, y: -0.3 },
-    { x: -0.15, y: -0.12 },
-    { x: 0.15, y: -0.12 },
-    { x: 0.5, y: -0.3 },
-    { x: 0.5, y: 0.3 },
-    { x: 0.15, y: 0.12 },
-    { x: -0.15, y: 0.12 },
-    { x: -0.5, y: 0.3 },
-  ];
-  return pts.map((p) => ({ x: p.x * w, y: p.y * h }));
-}
-
-// ---------- Zonas de cámara (aprox. desarrollo; origen esq. sup. izq.) ----------
-
-/** Módulo cuadrado (diagonal) arriba-izquierda: iPhone 13/14/15/16 estándar y Pro. */
-function squareCam(size: number): Pt[] {
-  const m = 5; // margen desde el borde
-  return [
-    { x: m, y: m },
-    { x: m + size, y: m },
-    { x: m + size, y: m + size },
-    { x: m, y: m + size },
-  ];
-}
-
-/** Módulo vertical (pastilla): iPhone 16 / 16e / 17 / 17 Air aprox. */
-function verticalCam(w: number, h: number): Pt[] {
-  const m = 5;
-  return [
-    { x: m, y: m },
-    { x: m + w, y: m },
-    { x: m + w, y: m + h },
-    { x: m, y: m + h },
-  ];
-}
-
-/** Barra horizontal completa: iPhone 17 Pro / Pro Max. */
-function barCam(caseWidth: number, h: number): Pt[] {
-  const m = 5;
-  return [
-    { x: m, y: m },
-    { x: caseWidth - m, y: m },
-    { x: caseWidth - m, y: m + h },
-    { x: m, y: m + h },
-  ];
-}
-
-// ---------- Dispositivos (21 modelos, §4.1) ----------
+// ---------- SS11.1 Dispositivos (21) ----------
 
 interface DeviceSeed {
+  slug: string;
   nombre: string;
   generacion: string;
-  anchoMm: number;
   altoMm: number;
-  radioEsquinaMm: number;
-  cameraZone: Pt[];
-  orden: number;
+  anchoMm: number;
+  cam: { x: number; y: number; w: number; h: number };
+  moduloForma: string;
 }
 
-const devices: DeviceSeed[] = [
-  // iPhone 13
-  { nombre: 'iPhone 13 mini', generacion: '13', anchoMm: 66.2, altoMm: 133.5, radioEsquinaMm: 9, cameraZone: squareCam(30), orden: 1 },
-  { nombre: 'iPhone 13', generacion: '13', anchoMm: 73.5, altoMm: 148.7, radioEsquinaMm: 9, cameraZone: squareCam(32), orden: 2 },
-  { nombre: 'iPhone 13 Pro', generacion: '13', anchoMm: 73.5, altoMm: 148.7, radioEsquinaMm: 9, cameraZone: squareCam(37), orden: 3 },
-  { nombre: 'iPhone 13 Pro Max', generacion: '13', anchoMm: 80.1, altoMm: 162.8, radioEsquinaMm: 9, cameraZone: squareCam(39), orden: 4 },
-  // iPhone 14
-  { nombre: 'iPhone 14', generacion: '14', anchoMm: 73.5, altoMm: 148.7, radioEsquinaMm: 9, cameraZone: squareCam(32), orden: 1 },
-  { nombre: 'iPhone 14 Plus', generacion: '14', anchoMm: 80.1, altoMm: 162.8, radioEsquinaMm: 9, cameraZone: squareCam(34), orden: 2 },
-  { nombre: 'iPhone 14 Pro', generacion: '14', anchoMm: 73.5, altoMm: 149.5, radioEsquinaMm: 9, cameraZone: squareCam(40), orden: 3 },
-  { nombre: 'iPhone 14 Pro Max', generacion: '14', anchoMm: 79.6, altoMm: 162.7, radioEsquinaMm: 9, cameraZone: squareCam(42), orden: 4 },
-  // iPhone 15
-  { nombre: 'iPhone 15', generacion: '15', anchoMm: 73.6, altoMm: 149.6, radioEsquinaMm: 10, cameraZone: squareCam(33), orden: 1 },
-  { nombre: 'iPhone 15 Plus', generacion: '15', anchoMm: 79.8, altoMm: 162.9, radioEsquinaMm: 10, cameraZone: squareCam(35), orden: 2 },
-  { nombre: 'iPhone 15 Pro', generacion: '15', anchoMm: 72.6, altoMm: 148.6, radioEsquinaMm: 10, cameraZone: squareCam(40), orden: 3 },
-  { nombre: 'iPhone 15 Pro Max', generacion: '15', anchoMm: 78.7, altoMm: 161.9, radioEsquinaMm: 10, cameraZone: squareCam(42), orden: 4 },
-  // iPhone 16
-  { nombre: 'iPhone 16', generacion: '16', anchoMm: 73.6, altoMm: 149.6, radioEsquinaMm: 10, cameraZone: verticalCam(16, 36), orden: 1 },
-  { nombre: 'iPhone 16 Plus', generacion: '16', anchoMm: 79.8, altoMm: 162.9, radioEsquinaMm: 10, cameraZone: verticalCam(17, 38), orden: 2 },
-  { nombre: 'iPhone 16 Pro', generacion: '16', anchoMm: 73.5, altoMm: 151.6, radioEsquinaMm: 10, cameraZone: squareCam(42), orden: 3 },
-  { nombre: 'iPhone 16 Pro Max', generacion: '16', anchoMm: 79.6, altoMm: 165.0, radioEsquinaMm: 10, cameraZone: squareCam(44), orden: 4 },
-  { nombre: 'iPhone 16e', generacion: '16', anchoMm: 73.5, altoMm: 148.7, radioEsquinaMm: 9, cameraZone: verticalCam(14, 26), orden: 5 },
-  // iPhone 17
-  { nombre: 'iPhone 17', generacion: '17', anchoMm: 73.6, altoMm: 151.6, radioEsquinaMm: 10, cameraZone: verticalCam(17, 38), orden: 1 },
-  { nombre: 'iPhone 17 Air', generacion: '17', anchoMm: 76.8, altoMm: 158.2, radioEsquinaMm: 10, cameraZone: barCam(76.8, 22), orden: 2 },
-  { nombre: 'iPhone 17 Pro', generacion: '17', anchoMm: 74.0, altoMm: 152.0, radioEsquinaMm: 10, cameraZone: barCam(74.0, 34), orden: 3 },
-  { nombre: 'iPhone 17 Pro Max', generacion: '17', anchoMm: 80.0, altoMm: 165.5, radioEsquinaMm: 10, cameraZone: barCam(80.0, 36), orden: 4 },
+const DEVICES: DeviceSeed[] = [
+  { slug: 'iphone-13-mini', nombre: 'iPhone 13 mini', generacion: '13', altoMm: 134.5, anchoMm: 67.2, cam: { x: 4, y: 4, w: 32, h: 32 }, moduloForma: 'cuadrado-diagonal' },
+  { slug: 'iphone-13', nombre: 'iPhone 13', generacion: '13', altoMm: 149.7, anchoMm: 74.5, cam: { x: 4, y: 4, w: 36, h: 36 }, moduloForma: 'cuadrado-diagonal' },
+  { slug: 'iphone-13-pro', nombre: 'iPhone 13 Pro', generacion: '13', altoMm: 149.7, anchoMm: 74.5, cam: { x: 4, y: 4, w: 42, h: 42 }, moduloForma: 'cuadrado-triple' },
+  { slug: 'iphone-13-pro-max', nombre: 'iPhone 13 Pro Max', generacion: '13', altoMm: 163.8, anchoMm: 81.1, cam: { x: 4, y: 4, w: 44, h: 44 }, moduloForma: 'cuadrado-triple' },
+  { slug: 'iphone-14', nombre: 'iPhone 14', generacion: '14', altoMm: 149.7, anchoMm: 74.5, cam: { x: 4, y: 4, w: 36, h: 36 }, moduloForma: 'cuadrado-diagonal' },
+  { slug: 'iphone-14-plus', nombre: 'iPhone 14 Plus', generacion: '14', altoMm: 163.8, anchoMm: 81.1, cam: { x: 4, y: 4, w: 38, h: 38 }, moduloForma: 'cuadrado-diagonal' },
+  { slug: 'iphone-14-pro', nombre: 'iPhone 14 Pro', generacion: '14', altoMm: 150.5, anchoMm: 74.5, cam: { x: 4, y: 4, w: 44, h: 44 }, moduloForma: 'cuadrado-triple' },
+  { slug: 'iphone-14-pro-max', nombre: 'iPhone 14 Pro Max', generacion: '14', altoMm: 163.7, anchoMm: 80.6, cam: { x: 4, y: 4, w: 46, h: 46 }, moduloForma: 'cuadrado-triple' },
+  { slug: 'iphone-15', nombre: 'iPhone 15', generacion: '15', altoMm: 150.6, anchoMm: 74.6, cam: { x: 4, y: 4, w: 37, h: 37 }, moduloForma: 'cuadrado-diagonal' },
+  { slug: 'iphone-15-plus', nombre: 'iPhone 15 Plus', generacion: '15', altoMm: 163.9, anchoMm: 80.8, cam: { x: 4, y: 4, w: 39, h: 39 }, moduloForma: 'cuadrado-diagonal' },
+  { slug: 'iphone-15-pro', nombre: 'iPhone 15 Pro', generacion: '15', altoMm: 149.6, anchoMm: 73.6, cam: { x: 4, y: 4, w: 45, h: 45 }, moduloForma: 'cuadrado-triple' },
+  { slug: 'iphone-15-pro-max', nombre: 'iPhone 15 Pro Max', generacion: '15', altoMm: 162.9, anchoMm: 79.7, cam: { x: 4, y: 4, w: 46, h: 46 }, moduloForma: 'cuadrado-triple' },
+  { slug: 'iphone-16', nombre: 'iPhone 16', generacion: '16', altoMm: 150.6, anchoMm: 74.6, cam: { x: 4, y: 4, w: 26, h: 40 }, moduloForma: 'vertical' },
+  { slug: 'iphone-16-plus', nombre: 'iPhone 16 Plus', generacion: '16', altoMm: 163.9, anchoMm: 80.8, cam: { x: 4, y: 4, w: 27, h: 42 }, moduloForma: 'vertical' },
+  { slug: 'iphone-16-pro', nombre: 'iPhone 16 Pro', generacion: '16', altoMm: 152.6, anchoMm: 74.5, cam: { x: 4, y: 4, w: 46, h: 46 }, moduloForma: 'cuadrado-triple' },
+  { slug: 'iphone-16-pro-max', nombre: 'iPhone 16 Pro Max', generacion: '16', altoMm: 166.0, anchoMm: 80.6, cam: { x: 4, y: 4, w: 47, h: 47 }, moduloForma: 'cuadrado-triple' },
+  { slug: 'iphone-16e', nombre: 'iPhone 16e', generacion: '16', altoMm: 149.7, anchoMm: 74.5, cam: { x: 4, y: 4, w: 22, h: 30 }, moduloForma: 'camara-unica-vertical' },
+  { slug: 'iphone-17', nombre: 'iPhone 17', generacion: '17', altoMm: 152.6, anchoMm: 74.5, cam: { x: 4, y: 4, w: 38, h: 38 }, moduloForma: 'vertical-doble' },
+  { slug: 'iphone-17-air', nombre: 'iPhone 17 Air', generacion: '17', altoMm: 159.2, anchoMm: 77.7, cam: { x: 4, y: 4, w: 68, h: 26 }, moduloForma: 'barra-horizontal' },
+  { slug: 'iphone-17-pro', nombre: 'iPhone 17 Pro', generacion: '17', altoMm: 153.0, anchoMm: 74.9, cam: { x: 4, y: 4, w: 68, h: 34 }, moduloForma: 'barra-horizontal' },
+  { slug: 'iphone-17-pro-max', nombre: 'iPhone 17 Pro Max', generacion: '17', altoMm: 166.4, anchoMm: 81.0, cam: { x: 4, y: 4, w: 72, h: 34 }, moduloForma: 'barra-horizontal' },
 ];
 
-// ---------- Elementos decorativos (§4.3) ----------
+const radioEsquina = (gen: string): number => (['16', '17'].includes(gen) ? 12 : 11);
+
+const camPolygon = (c: { x: number; y: number; w: number; h: number }) => [
+  { x: c.x, y: c.y },
+  { x: c.x + c.w, y: c.y },
+  { x: c.x + c.w, y: c.y + c.h },
+  { x: c.x, y: c.y + c.h },
+];
+
+// ---------- SS11.2 Fundas (6) y variantes (19) ----------
+
+interface CaseSeed {
+  slug: string;
+  nombre: string;
+  material: string;
+  descripcion: string;
+  destacada: boolean;
+  variantes: { colorNombre: string; colorHex: string; precioCentimos: number }[];
+}
+
+const CASES: CaseSeed[] = [
+  {
+    slug: 'silicona-soft', nombre: 'Silicona Soft', material: 'silicona', destacada: true,
+    descripcion: 'Tacto suave y agarre firme para el dia a dia. Protege sin sumar peso y las piezas se asientan sobre ella como si siempre hubieran estado ahi.',
+    variantes: [
+      { colorNombre: 'Rosa', colorHex: '#F4A7C3', precioCentimos: 1995 },
+      { colorNombre: 'Lavanda', colorHex: '#C3B1E1', precioCentimos: 1995 },
+      { colorNombre: 'Crema', colorHex: '#F5EBDD', precioCentimos: 1995 },
+      { colorNombre: 'Negro', colorHex: '#1E1E1E', precioCentimos: 1995 },
+    ],
+  },
+  {
+    slug: 'silicona-vivid', nombre: 'Silicona Vivid', material: 'silicona', destacada: true,
+    descripcion: 'Los colores mas intensos del catalogo en la misma silicona de tacto sedoso. Para disenos que se ven desde la otra punta de la clase.',
+    variantes: [
+      { colorNombre: 'Fucsia', colorHex: '#E84393', precioCentimos: 2195 },
+      { colorNombre: 'Coral', colorHex: '#F0705A', precioCentimos: 2195 },
+      { colorNombre: 'Menta', colorHex: '#9FD8C9', precioCentimos: 2195 },
+    ],
+  },
+  {
+    slug: 'crystal-clear', nombre: 'Crystal Clear', material: 'transparente', destacada: true,
+    descripcion: 'Transparencia total que deja el iPhone a la vista. Tus piezas parecen flotar sobre el propio telefono.',
+    variantes: [
+      { colorNombre: 'Transparente', colorHex: '#FFFFFF', precioCentimos: 1795 },
+      { colorNombre: 'Transparente rosado', colorHex: '#F9D9E7', precioCentimos: 1895 },
+    ],
+  },
+  {
+    slug: 'matte-shield', nombre: 'Matte Shield', material: 'rigida', destacada: false,
+    descripcion: 'Carcasa rigida de acabado mate que repele huellas. La opcion sobria para quien quiere que hablen las piezas.',
+    variantes: [
+      { colorNombre: 'Rosa palo', colorHex: '#E8B4C8', precioCentimos: 2295 },
+      { colorNombre: 'Blanco', colorHex: '#FAFAFA', precioCentimos: 2295 },
+      { colorNombre: 'Grafito', colorHex: '#3A3A3C', precioCentimos: 2295 },
+    ],
+  },
+  {
+    slug: 'glossy-pearl', nombre: 'Glossy Pearl', material: 'rigida-perlada', destacada: false,
+    descripcion: 'Brillo nacarado con reflejos iridiscentes que cambian con la luz. El lienzo mas fotogenico de la coleccion.',
+    variantes: [
+      { colorNombre: 'Perla', colorHex: '#F6EFF2', precioCentimos: 2495 },
+      { colorNombre: 'Rosa perla', colorHex: '#F2C9DC', precioCentimos: 2495 },
+    ],
+  },
+  {
+    slug: 'bumper-air', nombre: 'Bumper Air', material: 'silicona', destacada: false,
+    descripcion: 'La mas ligera de la familia, con bordes reforzados donde importa. Precio pequeno, personalizacion completa.',
+    variantes: [
+      { colorNombre: 'Rosa', colorHex: '#F4A7C3', precioCentimos: 1695 },
+      { colorNombre: 'Transparente', colorHex: '#FFFFFF', precioCentimos: 1695 },
+      { colorNombre: 'Negro', colorHex: '#1E1E1E', precioCentimos: 1695 },
+      { colorNombre: 'Lila', colorHex: '#D7C5EE', precioCentimos: 1695 },
+      { colorNombre: 'Blanco', colorHex: '#FAFAFA', precioCentimos: 1695 },
+    ],
+  },
+];
+
+// ---------- SS11.3 Elementos ----------
 
 interface ElementSeed {
+  slug: string;
   nombre: string;
   tipo: 'charm3d' | 'plano';
   categoria: string;
-  precioCentimos: number;
-  anchoMm: number;
-  altoMm: number;
-  profundidadMm?: number;
-  assetUrl: string;
-  hitbox: Pt[];
-  esNuevo?: boolean;
-  orden: number;
+  w: number;
+  h: number;
+  prof?: number;
+  precio: number; // centimos
+  acabado: string;
+  colores: string[];
+  recipe: string;
+  params?: Record<string, unknown>;
+  hitboxOverride?: Hitbox;
+  seasonSlug?: string;
   letraChar?: string;
-  season?: boolean;
+  esNuevo?: boolean;
 }
 
-function buildElements(): ElementSeed[] {
-  const els: ElementSeed[] = [];
+const E = (
+  slug: string, nombre: string, tipo: 'charm3d' | 'plano', categoria: string,
+  w: number, h: number, precio: number, acabado: string, colores: string[],
+  recipe: string, extra?: Partial<ElementSeed>,
+): ElementSeed => ({ slug, nombre, tipo, categoria, w, h, precio, acabado, colores, recipe, ...extra });
 
-  // Corazones
-  const heartColors = ['rosa', 'fucsia', 'rojo', 'perlado'];
-  heartColors.forEach((color, i) => {
-    els.push({
-      nombre: `Corazón ${color}`,
-      tipo: 'charm3d',
-      categoria: 'corazones',
-      precioCentimos: 250,
-      anchoMm: 12,
-      altoMm: 11,
-      profundidadMm: 4,
-      assetUrl: `procedural://heart?color=${color}`,
-      hitbox: heartHitbox(12, 11),
-      orden: i,
+const ELEMENTS: ElementSeed[] = [
+  // Corazones (8)
+  E('corazon-clasico', 'Corazon clasico', 'charm3d', 'corazones', 12, 11, 350, 'esmalte', ['#E84393'], 'heart-extrude', { prof: 3 }),
+  E('corazon-oro', 'Corazon oro', 'charm3d', 'corazones', 10, 9, 450, 'metal-oro', ['#D4AF37'], 'heart-extrude', { prof: 2.5 }),
+  E('corazon-plata', 'Corazon plata', 'charm3d', 'corazones', 10, 9, 450, 'metal-plata', ['#C0C0C0'], 'heart-extrude', { prof: 2.5 }),
+  E('corazon-cristal', 'Corazon cristal', 'charm3d', 'corazones', 14, 13, 550, 'cristal', ['#F9D9E7'], 'heart-extrude', { prof: 4 }),
+  E('mini-corazon', 'Mini corazon', 'charm3d', 'corazones', 7, 6.5, 250, 'esmalte', ['#E84393'], 'heart-extrude', { prof: 2 }),
+  E('corazon-doble', 'Corazon doble', 'charm3d', 'corazones', 16, 10, 495, 'esmalte', ['#F4A7C3', '#FFFFFF'], 'heart-extrude', { prof: 2.5, params: { doble: true } }),
+  E('sticker-corazon', 'Sticker corazon', 'plano', 'corazones', 15, 14, 195, 'vinilo', ['#F4A7C3'], 'heart-flat'),
+  E('sticker-corazon-contorno', 'Sticker corazon contorno', 'plano', 'corazones', 15, 14, 195, 'vinilo', ['#E84393'], 'heart-outline-flat'),
+  // Lazos (6)
+  E('lazo-coqueta', 'Lazo coqueta', 'charm3d', 'lazos', 18, 12, 495, 'esmalte', ['#E8B4C8'], 'bow-3d', { prof: 4 }),
+  E('lazo-saten', 'Lazo saten', 'charm3d', 'lazos', 20, 14, 595, 'esmalte', ['#D64570'], 'bow-3d', { prof: 5 }),
+  E('lazo-oro', 'Lazo oro', 'charm3d', 'lazos', 14, 10, 550, 'metal-oro', ['#D4AF37'], 'bow-3d', { prof: 3.5 }),
+  E('mini-lazo', 'Mini lazo', 'charm3d', 'lazos', 10, 7, 350, 'esmalte', ['#C3B1E1'], 'bow-3d', { prof: 2.5 }),
+  E('sticker-lazo', 'Sticker lazo', 'plano', 'lazos', 18, 13, 195, 'vinilo', ['#F4A7C3'], 'bow-flat'),
+  E('sticker-lazo-trazo', 'Sticker lazo trazo', 'plano', 'lazos', 16, 12, 195, 'vinilo', ['#1E1E1E'], 'bow-outline-flat'),
+  // Flores (8)
+  E('margarita', 'Margarita', 'charm3d', 'flores', 13, 13, 395, 'esmalte', ['#FFFFFF', '#F0B429'], 'flower-3d', { prof: 3.5, params: { petalos: 8 } }),
+  E('flor-rosa', 'Flor rosa', 'charm3d', 'flores', 13, 13, 395, 'esmalte', ['#F4A7C3', '#D4AF37'], 'flower-3d', { prof: 3.5, params: { petalos: 6 } }),
+  E('flor-cerezo', 'Flor de cerezo', 'charm3d', 'flores', 11, 11, 395, 'esmalte', ['#F9CFE0'], 'flower-3d', { prof: 3, params: { petalos: 5 } }),
+  E('tulipan', 'Tulipan', 'charm3d', 'flores', 9, 14, 395, 'esmalte', ['#F0705A', '#5B8C5A'], 'tulip-3d', { prof: 4 }),
+  E('girasol', 'Girasol', 'charm3d', 'flores', 14, 14, 450, 'esmalte', ['#F0B429', '#6B4226'], 'flower-3d', { prof: 3.5, params: { petalos: 12 } }),
+  E('sticker-margarita', 'Sticker margarita', 'plano', 'flores', 16, 16, 195, 'vinilo', ['#FFFFFF', '#F0B429'], 'flower-flat'),
+  E('sticker-flor-retro', 'Sticker flor retro', 'plano', 'flores', 15, 15, 195, 'vinilo', ['#F0705A', '#F4A7C3'], 'flower-flat'),
+  E('sticker-ramillete', 'Sticker ramillete', 'plano', 'flores', 20, 24, 250, 'vinilo', ['#F4A7C3', '#9FD8C9', '#F0B429'], 'bouquet-flat'),
+  // Frutas (7)
+  E('cereza', 'Cereza', 'charm3d', 'frutas', 12, 14, 450, 'esmalte', ['#D7263D', '#5B8C5A'], 'cherry-3d', { prof: 4.5 }),
+  E('fresa', 'Fresa', 'charm3d', 'frutas', 11, 13, 450, 'esmalte', ['#D7263D', '#F5D547'], 'strawberry-3d', { prof: 4.5 }),
+  E('limon', 'Limon', 'charm3d', 'frutas', 12, 9, 395, 'esmalte', ['#F5D547'], 'lemon-3d', { prof: 4 }),
+  E('manzana', 'Manzana', 'charm3d', 'frutas', 11, 11, 395, 'esmalte', ['#7BB661'], 'apple-3d', { prof: 4.5 }),
+  E('platano', 'Platano', 'charm3d', 'frutas', 6, 15, 395, 'esmalte', ['#F5D547'], 'banana-3d', { prof: 3 }),
+  E('sticker-sandia', 'Sticker sandia', 'plano', 'frutas', 15, 12, 195, 'vinilo', ['#D7263D', '#5B8C5A'], 'watermelon-flat'),
+  E('sticker-pina', 'Sticker pina', 'plano', 'frutas', 12, 18, 195, 'vinilo', ['#F0B429', '#5B8C5A'], 'pineapple-flat'),
+  // Animales (8)
+  E('osito', 'Osito', 'charm3d', 'animales', 13, 15, 550, 'esmalte', ['#D7B899'], 'bear-3d', { prof: 5 }),
+  E('mariposa', 'Mariposa', 'charm3d', 'animales', 16, 12, 495, 'cristal', ['#C3B1E1'], 'butterfly-3d', { prof: 3 }),
+  E('gatito', 'Gatito', 'charm3d', 'animales', 12, 13, 550, 'esmalte', ['#FFFFFF', '#F4A7C3'], 'cat-3d', { prof: 4.5 }),
+  E('abeja', 'Abeja', 'charm3d', 'animales', 11, 9, 450, 'esmalte', ['#F5D547', '#1E1E1E'], 'bee-3d', { prof: 4 }),
+  E('conejo', 'Conejo', 'charm3d', 'animales', 10, 16, 550, 'esmalte', ['#FFFFFF'], 'bunny-3d', { prof: 4.5 }),
+  E('sticker-mariposa', 'Sticker mariposa', 'plano', 'animales', 18, 14, 195, 'vinilo', ['#C3B1E1'], 'butterfly-flat'),
+  E('sticker-huella', 'Sticker huella', 'plano', 'animales', 8, 8, 150, 'vinilo', ['#F4A7C3'], 'paw-flat'),
+  E('sticker-carita-gato', 'Sticker carita de gato', 'plano', 'animales', 14, 12, 195, 'vinilo', ['#1E1E1E'], 'catface-flat'),
+  // Estrellas (6)
+  E('estrella-oro', 'Estrella oro', 'charm3d', 'estrellas', 11, 11, 395, 'metal-oro', ['#D4AF37'], 'star-extrude', { prof: 3 }),
+  E('estrella-plata', 'Estrella plata', 'charm3d', 'estrellas', 11, 11, 395, 'metal-plata', ['#C0C0C0'], 'star-extrude', { prof: 3 }),
+  E('estrella-fugaz', 'Estrella fugaz', 'charm3d', 'estrellas', 18, 10, 495, 'metal-oro', ['#D4AF37', '#F4A7C3'], 'shooting-star-3d', { prof: 3 }),
+  E('luna-creciente', 'Luna creciente', 'charm3d', 'estrellas', 10, 12, 395, 'metal-oro', ['#D4AF37'], 'moon-extrude', { prof: 3 }),
+  E('sticker-estrella', 'Sticker estrella', 'plano', 'estrellas', 13, 13, 150, 'vinilo', ['#F5D547'], 'star-flat'),
+  E('sticker-constelacion', 'Sticker constelacion', 'plano', 'estrellas', 24, 18, 250, 'vinilo', ['#D4AF37'], 'constellation-flat'),
+  // Cadenas (5) — hitbox rectangular por diseno (SS11.6)
+  E('cadena-curb-corta', 'Cadena curb corta', 'charm3d', 'cadenas', 8, 34, 695, 'metal-oro', ['#D4AF37'], 'chain-segment', { prof: 3, params: { eslabones: 6 }, hitboxOverride: rectHitbox(8, 34) }),
+  E('cadena-curb-larga', 'Cadena curb larga', 'charm3d', 'cadenas', 8, 52, 895, 'metal-oro', ['#D4AF37'], 'chain-segment', { prof: 3, params: { eslabones: 9 }, hitboxOverride: rectHitbox(8, 52) }),
+  E('cadena-perlas', 'Cadena de perlas', 'charm3d', 'cadenas', 7, 40, 795, 'nacar', ['#F6EFF2'], 'pearl-strand', { prof: 3.2, params: { perlas: 11 }, hitboxOverride: rectHitbox(7, 40) }),
+  E('cadena-plata-corta', 'Cadena plata corta', 'charm3d', 'cadenas', 8, 34, 695, 'metal-plata', ['#C0C0C0'], 'chain-segment', { prof: 3, params: { eslabones: 6 }, hitboxOverride: rectHitbox(8, 34) }),
+  E('sticker-cadena', 'Sticker cadena', 'plano', 'cadenas', 6, 40, 250, 'vinilo', ['#D4AF37'], 'chain-flat', { hitboxOverride: rectHitbox(6, 40) }),
+  // Temporada "Verano" (5)
+  E('sombrilla', 'Sombrilla', 'charm3d', 'temporada', 14, 16, 495, 'esmalte', ['#F4A7C3', '#FFFFFF'], 'umbrella-3d', { prof: 5, seasonSlug: 'verano' }),
+  E('helado', 'Helado', 'charm3d', 'temporada', 10, 16, 450, 'esmalte', ['#F5EBDD', '#F4A7C3'], 'icecream-3d', { prof: 4.5, seasonSlug: 'verano' }),
+  E('concha', 'Concha', 'charm3d', 'temporada', 13, 12, 450, 'nacar', ['#F6EFF2'], 'shell-3d', { prof: 4, seasonSlug: 'verano' }),
+  E('sol', 'Sol', 'charm3d', 'temporada', 13, 13, 395, 'metal-oro', ['#D4AF37'], 'sun-extrude', { prof: 3, seasonSlug: 'verano' }),
+  E('sticker-ola', 'Sticker ola', 'plano', 'temporada', 20, 10, 195, 'vinilo', ['#7EB6D9'], 'wave-flat', { seasonSlug: 'verano' }),
+];
+
+// Letras (SS11.3): dos juegos, un elemento por caracter
+function letterElements(): ElementSeed[] {
+  const out: ElementSeed[] = [];
+  for (const ch of VALID_LETTER_CHARS) {
+    const safe = ch === 'Ñ' ? 'nn' : ch.toLowerCase();
+    const wOro = glyphWidthMm(ch, 12);
+    out.push({
+      slug: `letra-oro-${safe}`, nombre: 'Letra oro', tipo: 'charm3d', categoria: 'letras',
+      w: wOro, h: 12, prof: 2.5, precio: 195, acabado: 'metal-oro', colores: ['#D4AF37'],
+      recipe: 'letter-extrude', params: { juego: 'letras-oro' },
+      hitboxOverride: rectHitbox(wOro, 12), letraChar: ch,
     });
-  });
-  els.push({
-    nombre: 'Corazón grande brillante',
-    tipo: 'charm3d',
-    categoria: 'corazones',
-    precioCentimos: 390,
-    anchoMm: 18,
-    altoMm: 16,
-    profundidadMm: 5,
-    assetUrl: 'procedural://heart?color=glitter',
-    hitbox: heartHitbox(18, 16),
-    esNuevo: true,
-    orden: 4,
-  });
-  els.push({
-    nombre: 'Mini corazón sticker',
-    tipo: 'plano',
-    categoria: 'corazones',
-    precioCentimos: 120,
-    anchoMm: 8,
-    altoMm: 7,
-    assetUrl: 'procedural://heart-flat?color=rosa',
-    hitbox: heartHitbox(8, 7),
-    orden: 5,
-  });
-
-  // Lazos
-  ['rosa', 'blanco', 'fucsia'].forEach((color, i) => {
-    els.push({
-      nombre: `Lazo ${color}`,
-      tipo: 'charm3d',
-      categoria: 'lazos',
-      precioCentimos: 320,
-      anchoMm: 16,
-      altoMm: 10,
-      profundidadMm: 5,
-      assetUrl: `procedural://bow?color=${color}`,
-      hitbox: bowHitbox(16, 10),
-      orden: i,
+    const wSt = glyphWidthMm(ch, 14);
+    out.push({
+      slug: `letra-sticker-${safe}`, nombre: 'Letra sticker', tipo: 'plano', categoria: 'letras',
+      w: wSt, h: 14, precio: 95, acabado: 'vinilo', colores: ['#1E1E1E'],
+      recipe: 'letter-flat', params: { juego: 'letras-sticker' },
+      hitboxOverride: rectHitbox(wSt, 14), letraChar: ch,
     });
-  });
-  els.push({
-    nombre: 'Lazo coqueta XL',
-    tipo: 'charm3d',
-    categoria: 'lazos',
-    precioCentimos: 450,
-    anchoMm: 24,
-    altoMm: 15,
-    profundidadMm: 6,
-    assetUrl: 'procedural://bow?color=coqueta',
-    hitbox: bowHitbox(24, 15),
-    esNuevo: true,
-    orden: 3,
-  });
-
-  // Flores
-  ['margarita', 'rosa', 'lavanda', 'girasol'].forEach((flor, i) => {
-    els.push({
-      nombre: `Flor ${flor}`,
-      tipo: 'charm3d',
-      categoria: 'flores',
-      precioCentimos: 280,
-      anchoMm: 13,
-      altoMm: 13,
-      profundidadMm: 4,
-      assetUrl: `procedural://flower?tipo=${flor}`,
-      hitbox: circleHitbox(13),
-      orden: i,
-    });
-  });
-  els.push({
-    nombre: 'Florecitas sticker',
-    tipo: 'plano',
-    categoria: 'flores',
-    precioCentimos: 150,
-    anchoMm: 10,
-    altoMm: 10,
-    assetUrl: 'procedural://flower-flat',
-    hitbox: circleHitbox(10),
-    orden: 4,
-  });
-
-  // Frutas
-  ['fresa', 'cereza', 'limón', 'sandía', 'melocotón'].forEach((fruta, i) => {
-    els.push({
-      nombre: `Fruta ${fruta}`,
-      tipo: 'charm3d',
-      categoria: 'frutas',
-      precioCentimos: 300,
-      anchoMm: 12,
-      altoMm: 12,
-      profundidadMm: 5,
-      assetUrl: `procedural://fruit?tipo=${fruta}`,
-      hitbox: circleHitbox(12),
-      orden: i,
-    });
-  });
-
-  // Animales
-  ['gatito', 'osito', 'conejito', 'patito', 'mariposa'].forEach((animal, i) => {
-    els.push({
-      nombre: `Animalito ${animal}`,
-      tipo: 'charm3d',
-      categoria: 'animales',
-      precioCentimos: 350,
-      anchoMm: 15,
-      altoMm: 15,
-      profundidadMm: 6,
-      assetUrl: `procedural://animal?tipo=${animal}`,
-      hitbox: circleHitbox(15),
-      orden: i,
-    });
-  });
-  els.push({
-    nombre: 'Mariposa sticker',
-    tipo: 'plano',
-    categoria: 'animales',
-    precioCentimos: 160,
-    anchoMm: 12,
-    altoMm: 10,
-    assetUrl: 'procedural://butterfly-flat',
-    hitbox: rectHitbox(12, 10),
-    orden: 5,
-  });
-
-  // Estrellas
-  ['dorada', 'plateada', 'rosa'].forEach((color, i) => {
-    els.push({
-      nombre: `Estrella ${color}`,
-      tipo: 'charm3d',
-      categoria: 'estrellas',
-      precioCentimos: 260,
-      anchoMm: 12,
-      altoMm: 12,
-      profundidadMm: 4,
-      assetUrl: `procedural://star?color=${color}`,
-      hitbox: starHitbox(12),
-      orden: i,
-    });
-  });
-  els.push({
-    nombre: 'Lluvia de estrellitas sticker',
-    tipo: 'plano',
-    categoria: 'estrellas',
-    precioCentimos: 140,
-    anchoMm: 9,
-    altoMm: 9,
-    assetUrl: 'procedural://star-flat',
-    hitbox: starHitbox(9),
-    orden: 3,
-  });
-
-  // Cadenas
-  ['dorada', 'plateada', 'perlas'].forEach((tipo, i) => {
-    els.push({
-      nombre: `Cadena ${tipo}`,
-      tipo: 'charm3d',
-      categoria: 'cadenas',
-      precioCentimos: 480,
-      anchoMm: 40,
-      altoMm: 8,
-      profundidadMm: 4,
-      assetUrl: `procedural://chain?tipo=${tipo}`,
-      hitbox: rectHitbox(40, 8),
-      orden: i,
-    });
-  });
-
-  // Letras (§4.4): un Element por carácter A–Z, Ñ, 0–9
-  const chars = 'ABCDEFGHIJKLMNÑOPQRSTUVWXYZ0123456789';
-  [...chars].forEach((ch, i) => {
-    els.push({
-      nombre: 'Letra dorada',
-      tipo: 'charm3d',
-      categoria: 'letras',
-      precioCentimos: 150,
-      anchoMm: 9,
-      altoMm: 11,
-      profundidadMm: 3,
-      assetUrl: `procedural://letter?char=${encodeURIComponent(ch)}`,
-      hitbox: rectHitbox(9, 11),
-      orden: i,
-      letraChar: ch,
-    });
-  });
-
-  // Temporada 🎄 (colección navideña de ejemplo)
-  ['arbolito', 'copo de nieve', 'bastón de caramelo', 'gorro'].forEach((item, i) => {
-    els.push({
-      nombre: `Navidad: ${item}`,
-      tipo: 'charm3d',
-      categoria: 'temporada',
-      precioCentimos: 340,
-      anchoMm: 13,
-      altoMm: 13,
-      profundidadMm: 5,
-      assetUrl: `procedural://xmas?tipo=${encodeURIComponent(item)}`,
-      hitbox: circleHitbox(13),
-      orden: i,
-      season: true,
-    });
-  });
-
-  return els;
+  }
+  return out;
 }
 
-// ---------- Main ----------
+// ---------- SS11.4 Preestablecidos (4) ----------
+// Coordenadas provisionales ajustadas para validar contra iPhone 15 Pro
+// (camara 45x45 + 1 mm de inflado: zona prohibida hasta x=50, y=50).
+
+interface PresetSeed {
+  slug: string;
+  nombre: string;
+  precio: number;
+  items: { el: string; x: number; y: number; rot: number }[];
+}
+
+const PRESETS: PresetSeed[] = [
+  {
+    slug: 'golden-hour', nombre: 'Golden Hour', precio: 2995,
+    items: [
+      { el: 'estrella-oro', x: 24, y: 62, rot: 15 },
+      { el: 'luna-creciente', x: 52, y: 60, rot: 350 },
+      { el: 'corazon-oro', x: 20, y: 88, rot: 20 },
+      { el: 'corazon-oro', x: 36, y: 102, rot: 0 },
+      { el: 'corazon-oro', x: 52, y: 116, rot: 340 },
+    ],
+  },
+  {
+    slug: 'jardin', nombre: 'Jardin', precio: 3495,
+    items: [
+      { el: 'flor-cerezo', x: 22, y: 64, rot: 0 },
+      { el: 'margarita', x: 50, y: 58, rot: 0 },
+      { el: 'mariposa', x: 40, y: 96, rot: 25 },
+      { el: 'sticker-ramillete', x: 30, y: 126, rot: 0 },
+    ],
+  },
+  {
+    slug: 'coquette', nombre: 'Coquette', precio: 3295,
+    items: [
+      { el: 'lazo-saten', x: 37, y: 60, rot: 0 },
+      { el: 'cadena-perlas', x: 62, y: 100, rot: 0 },
+      { el: 'mini-lazo', x: 22, y: 120, rot: 15 },
+    ],
+  },
+  {
+    slug: 'frutal', nombre: 'Frutal', precio: 3195,
+    items: [
+      { el: 'cereza', x: 24, y: 60, rot: 10 },
+      { el: 'fresa', x: 50, y: 72, rot: 350 },
+      { el: 'limon', x: 32, y: 92, rot: 80 },
+      { el: 'sticker-sandia', x: 46, y: 116, rot: 0 },
+    ],
+  },
+];
+
+// ---------- main ----------
+
+function elementHitbox(e: ElementSeed): Hitbox {
+  return e.hitboxOverride ?? recipeHitbox(e.recipe, e.w, e.h);
+}
 
 async function main() {
-  console.log('🌱 Sembrando datos de desarrollo de Cute Cases…');
+  console.log(`Seed v4 (demo=${DEMO})`);
 
-  // Limpieza idempotente (solo desarrollo)
-  await prisma.adminAudit.deleteMany();
-  await prisma.cartItem.deleteMany();
-  await prisma.report.deleteMany();
-  await prisma.like.deleteMany();
-  await prisma.design.deleteMany();
-  await prisma.presetDesign.deleteMany();
-  await prisma.element.deleteMany();
-  await prisma.seasonCollection.deleteMany();
-  await prisma.caseVariant.deleteMany();
-  await prisma.caseCompatibility.deleteMany();
-  await prisma.caseBase.deleteMany();
-  await prisma.user.deleteMany();
-  await prisma.deviceModel.deleteMany();
-  await prisma.appSetting.deleteMany();
+  // Settings singleton
+  await prisma.settings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
 
   // Dispositivos
-  const deviceIds: Record<string, string> = {};
-  for (const d of devices) {
-    const created = await prisma.deviceModel.create({
-      data: {
-        tipo: 'iphone',
-        nombre: d.nombre,
-        generacion: d.generacion,
-        anchoMm: d.anchoMm,
-        altoMm: d.altoMm,
-        radioEsquinaMm: d.radioEsquinaMm,
-        cameraZone: d.cameraZone,
-        asset3dUrl: 'procedural://case',
-        activo: true, // ⚠️ solo en seed de DESARROLLO (medidas sin verificar)
-        orden: d.orden,
+  for (const d of DEVICES) {
+    await prisma.deviceModel.upsert({
+      where: { slug: d.slug },
+      create: {
+        slug: d.slug, nombre: d.nombre, generacion: d.generacion,
+        anchoMm: d.anchoMm, altoMm: d.altoMm, radioEsquinaMm: radioEsquina(d.generacion),
+        grosorMm: 2.5, cameraZone: camPolygon(d.cam), moduloForma: d.moduloForma, activo: true,
+      },
+      update: {
+        nombre: d.nombre, generacion: d.generacion, anchoMm: d.anchoMm, altoMm: d.altoMm,
+        radioEsquinaMm: radioEsquina(d.generacion), cameraZone: camPolygon(d.cam),
+        moduloForma: d.moduloForma, activo: true,
       },
     });
-    deviceIds[d.nombre] = created.id;
   }
-  console.log(`  📱 ${devices.length} modelos de iPhone`);
+  console.log(`  dispositivos: ${DEVICES.length}`);
 
-  // Fundas base + variantes + compatibilidad
-  const allDeviceIds = Object.values(deviceIds);
-  const casesData = [
-    {
-      slug: 'silicona-soft',
-      nombre: 'Silicona Soft',
-      descripcion: 'Suave, con tacto de melocotón y protección total. La favorita de la casa 💖',
-      material: 'silicona',
-      destacada: true,
-      variantes: [
-        { colorNombre: 'Rosa bebé', colorHex: '#FFC9E3', precioCentimos: 1990 },
-        { colorNombre: 'Fucsia', colorHex: '#F5259C', precioCentimos: 1990 },
-        { colorNombre: 'Lila', colorHex: '#C9A7EB', precioCentimos: 2190 },
-        { colorNombre: 'Blanco nube', colorHex: '#FFF7FB', precioCentimos: 1990 },
-      ],
-    },
-    {
-      slug: 'transparente-crystal',
-      nombre: 'Transparente Crystal',
-      descripcion: 'Deja ver tu iPhone y luce tus charms como en una vitrina ✨',
-      material: 'transparente',
-      destacada: true,
-      variantes: [
-        { colorNombre: 'Cristal', colorHex: '#F3F3F7', precioCentimos: 1790 },
-        { colorNombre: 'Cristal rosado', colorHex: '#FFE4F1', precioCentimos: 1890 },
-      ],
-    },
-    {
-      slug: 'rigida-glam',
-      nombre: 'Rígida Glam',
-      descripcion: 'Acabado brillante tipo espejo con protección extra en las esquinas.',
-      material: 'rigida',
-      destacada: false,
-      variantes: [
-        { colorNombre: 'Rosa espejo', colorHex: '#FFA1CF', precioCentimos: 2490 },
-        { colorNombre: 'Perla', colorHex: '#F5EDF2', precioCentimos: 2490 },
-        { colorNombre: 'Cereza', colorHex: '#D42A5B', precioCentimos: 2690, disponible: false },
-      ],
-    },
-  ];
-
-  const caseVariantIds: Record<string, string[]> = {};
-  for (const c of casesData) {
-    const base = await prisma.caseBase.create({
-      data: {
-        slug: c.slug,
-        nombre: c.nombre,
-        descripcion: c.descripcion,
-        material: c.material,
-        fotos: [
-          `/img/cases/${c.slug}-1.webp`,
-          `/img/cases/${c.slug}-2.webp`,
-          `/img/cases/${c.slug}-3.webp`,
-        ],
-        asset3dUrl: 'procedural://case',
-        activo: true,
-        destacada: c.destacada,
-        compat: { create: allDeviceIds.map((deviceId) => ({ deviceId })) },
-        variantes: { create: c.variantes },
+  // Fundas + variantes + compatibilidad total (molde parametrico SS9.4)
+  const allDevices = await prisma.deviceModel.findMany({ select: { id: true } });
+  for (const c of CASES) {
+    const base = await prisma.caseBase.upsert({
+      where: { slug: c.slug },
+      create: {
+        slug: c.slug, nombre: c.nombre, descripcion: c.descripcion, material: c.material,
+        fotos: [`/renders/cases/${c.slug}.webp`], activo: true, destacada: c.destacada,
       },
-      include: { variantes: true },
+      update: { nombre: c.nombre, descripcion: c.descripcion, material: c.material, activo: true, destacada: c.destacada },
     });
-    caseVariantIds[c.slug] = base.variantes.map((v) => v.id);
+    await prisma.caseCompatibility.deleteMany({ where: { caseId: base.id } });
+    await prisma.caseCompatibility.createMany({
+      data: allDevices.map((d) => ({ caseId: base.id, deviceId: d.id })),
+    });
+    // Variantes: upsert por (caseBaseId, colorNombre)
+    for (const v of c.variantes) {
+      const existing = await prisma.caseVariant.findFirst({
+        where: { caseBaseId: base.id, colorNombre: v.colorNombre },
+      });
+      if (existing) {
+        await prisma.caseVariant.update({
+          where: { id: existing.id },
+          data: { colorHex: v.colorHex, precioCentimos: v.precioCentimos, disponible: true },
+        });
+      } else {
+        await prisma.caseVariant.create({
+          data: { caseBaseId: base.id, ...v, disponible: true },
+        });
+      }
+    }
   }
-  console.log(`  🎀 ${casesData.length} fundas base con variantes`);
+  console.log(`  fundas: ${CASES.length} (variantes: ${CASES.reduce((a, c) => a + c.variantes.length, 0)})`);
 
-  // Colección de temporada activa (ventana amplia para desarrollo)
-  const season = await prisma.seasonCollection.create({
-    data: {
-      nombre: 'Navidad Cute',
-      emoji: '🎄',
-      fechaInicio: new Date('2026-01-01T00:00:00Z'),
-      fechaFin: new Date('2026-12-31T23:59:59Z'),
+  // Temporada "Verano" (activa en seed: 2026-06-01 -> 2026-09-15)
+  const season = await prisma.seasonCollection.upsert({
+    where: { slug: 'verano' },
+    create: {
+      slug: 'verano', nombre: 'Verano',
+      fechaInicio: new Date('2026-06-01T00:00:00Z'),
+      fechaFin: new Date('2026-09-15T23:59:59Z'),
       activo: true,
     },
+    update: { activo: true },
   });
 
-  // Elementos
-  const elements = buildElements();
-  const elementIds: string[] = [];
-  for (const e of elements) {
-    const created = await prisma.element.create({
-      data: {
-        nombre: e.nombre,
-        tipo: e.tipo,
-        categoria: e.categoria,
-        precioCentimos: e.precioCentimos,
-        anchoMm: e.anchoMm,
-        altoMm: e.altoMm,
-        profundidadMm: e.profundidadMm ?? null,
-        assetUrl: e.assetUrl,
-        hitbox: e.hitbox,
-        activo: true,
-        esNuevo: e.esNuevo ?? false,
-        orden: e.orden,
-        seasonId: e.season ? season.id : null,
-        letraChar: e.letraChar ?? null,
+  // Elementos (+ letras)
+  const allElements = [...ELEMENTS, ...letterElements()];
+  let orden = 0;
+  for (const e of allElements) {
+    const hitbox = elementHitbox(e);
+    await prisma.element.upsert({
+      where: { slug: e.slug },
+      create: {
+        slug: e.slug, nombre: e.nombre, tipo: e.tipo, categoria: e.categoria,
+        precioCentimos: e.precio, anchoMm: e.w, altoMm: e.h, profundidadMm: e.prof ?? null,
+        recipe: e.recipe, recipeParams: (e.params ?? undefined) as object | undefined,
+        hitbox: hitbox as unknown as object, acabado: e.acabado, colores: e.colores,
+        letraChar: e.letraChar ?? null, esNuevo: e.esNuevo ?? false, orden: orden++,
+        activo: true, seasonId: e.seasonSlug ? season.id : null,
+      },
+      update: {
+        nombre: e.nombre, tipo: e.tipo, categoria: e.categoria, precioCentimos: e.precio,
+        anchoMm: e.w, altoMm: e.h, profundidadMm: e.prof ?? null, recipe: e.recipe,
+        recipeParams: (e.params ?? undefined) as object | undefined,
+        hitbox: hitbox as unknown as object, acabado: e.acabado, colores: e.colores,
+        letraChar: e.letraChar ?? null, activo: true,
+        seasonId: e.seasonSlug ? season.id : null,
       },
     });
-    elementIds.push(created.id);
   }
-  console.log(`  💎 ${elements.length} elementos decorativos (incluye ${37} letras)`);
+  console.log(`  elementos: ${allElements.length} (incluye ${letterElements().length} glifos)`);
 
-  // Usuarios: admin + demo (contraseña en dev: "cutecases123")
-  const { hash } = await import('@node-rs/argon2');
-  const passwordHash = await hash('cutecases123');
-  const admin = await prisma.user.create({
-    data: {
-      email: 'admin@cutecases.dev',
-      nombre: 'Equipo Cute Cases',
-      provider: 'credentials',
-      passwordHash,
-      rol: 'admin',
-      emailVerificado: true,
-    },
+  // Preestablecidos: VALIDACION OBLIGATORIA con el motor (SS11.4)
+  const ref = DEVICES.find((d) => d.slug === 'iphone-15-pro')!;
+  const refSpec: DeviceSpec = {
+    anchoMm: ref.anchoMm, altoMm: ref.altoMm,
+    radioEsquinaMm: radioEsquina(ref.generacion), cameraZone: camPolygon(ref.cam),
+  };
+  const shapes = new Map<string, ElementShape>();
+  for (const e of allElements) {
+    shapes.set(e.slug, { hitbox: elementHitbox(e), anchoMm: e.w, altoMm: e.h });
+  }
+  const siliconaRosa = await prisma.caseVariant.findFirstOrThrow({
+    where: { colorNombre: 'Rosa', caseBase: { slug: 'silicona-soft' } },
   });
-  await prisma.user.create({
-    data: {
-      email: 'demo@cutecases.dev',
-      nombre: 'Vega',
-      provider: 'credentials',
-      passwordHash,
-      rol: 'user',
-      deviceId: deviceIds['iPhone 15 Pro'],
-      emailVerificado: true,
-    },
-  });
-  console.log('  👤 usuarios admin@cutecases.dev y demo@cutecases.dev (pass: cutecases123)');
 
-  // Preestablecido de ejemplo (§4.6)
-  const heart = await prisma.element.findFirst({ where: { categoria: 'corazones' } });
-  const bow = await prisma.element.findFirst({ where: { categoria: 'lazos' } });
-  const star = await prisma.element.findFirst({ where: { categoria: 'estrellas' } });
-  const siliconaVariants = caseVariantIds['silicona-soft'] ?? [];
-  if (heart && bow && star && siliconaVariants.length > 0) {
-    await prisma.presetDesign.create({
-      data: {
-        slug: 'sueno-rosa',
-        nombre: 'Sueño Rosa',
-        precioCentimos: 2990,
+  for (const p of PRESETS) {
+    const items: PlacedItem[] = p.items.map((it, i) => ({
+      instanceId: `${p.slug}-${i}`, elementId: it.el, xMm: it.x, yMm: it.y, rotationDeg: it.rot,
+    }));
+    const results = validarEscena(items, shapes, refSpec);
+    const invalid = [...results.entries()].filter(([, r]) => !r.valida);
+    if (invalid.length > 0) {
+      const detail = invalid
+        .map(([id, r]) => `${id}: ${r.motivo}${r.refs ? ` (${r.refs.join(',')})` : ''}`)
+        .join('; ');
+      throw new Error(`Preset "${p.nombre}" invalido: ${detail}. El seed aborta (SS11.4).`);
+    }
+    const elementIdMap = new Map<string, string>();
+    for (const it of p.items) {
+      if (!elementIdMap.has(it.el)) {
+        const el = await prisma.element.findUniqueOrThrow({ where: { slug: it.el } });
+        elementIdMap.set(it.el, el.id);
+      }
+    }
+    await prisma.presetDesign.upsert({
+      where: { slug: p.slug },
+      create: {
+        slug: p.slug, nombre: p.nombre, precioCentimos: p.precio,
         designData: {
-          caseSlug: 'silicona-soft',
-          caseVariantId: siliconaVariants[0],
-          elementos: [
-            { elementId: heart.id, xMm: 36, yMm: 75, rotacionGrados: 0 },
-            { elementId: bow.id, xMm: 36, yMm: 100, rotacionGrados: 12 },
-            { elementId: star.id, xMm: 52, yMm: 120, rotacionGrados: 340 },
-          ],
+          caseSlug: 'silicona-soft', caseVariantId: siliconaRosa.id,
+          referenceDeviceSlug: 'iphone-15-pro',
+          elementos: p.items.map((it, i) => ({
+            instanceId: `${p.slug}-${i}`, elementId: elementIdMap.get(it.el),
+            elementSlug: it.el, xMm: it.x, yMm: it.y, rotationDeg: it.rot,
+          })),
         },
-        fotos: ['/img/presets/sueno-rosa.webp'],
-        publicado: true,
-        orden: 0,
+        fotos: [`/renders/presets/${p.slug}.webp`],
+        publicado: true, orden: PRESETS.indexOf(p),
+      },
+      update: {
+        nombre: p.nombre, precioCentimos: p.precio, publicado: true, orden: PRESETS.indexOf(p),
       },
     });
-    console.log('  🌟 1 diseño preestablecido publicado');
+  }
+  console.log(`  preestablecidos: ${PRESETS.length} (validados contra ${ref.nombre})`);
+
+  // ---------- SS11.7 Contenido de demostracion ----------
+  if (DEMO) {
+    const { hash } = await import('@node-rs/argon2');
+    const passwordHash = await hash(process.env.SEED_ADMIN_PASSWORD ?? 'cutecases-dev');
+    const admin = await prisma.user.upsert({
+      where: { email: 'admin@cutecases.dev' },
+      create: { email: 'admin@cutecases.dev', nombre: 'Equipo Cute Cases', provider: 'credentials', passwordHash, rol: 'admin', emailVerificado: true },
+      update: { rol: 'admin' },
+    });
+    const demo = await prisma.user.upsert({
+      where: { email: 'demo@cutecases.dev' },
+      create: { email: 'demo@cutecases.dev', nombre: 'Vega', provider: 'credentials', passwordHash, emailVerificado: true },
+      update: {},
+    });
+    const estudio = await prisma.user.upsert({
+      where: { email: 'estudio@cutecases.dev' },
+      create: { email: 'estudio@cutecases.dev', nombre: 'Estudio Cute Cases', provider: 'credentials', passwordHash, emailVerificado: true },
+      update: {},
+    });
+
+    const iphone15pro = await prisma.deviceModel.findUniqueOrThrow({ where: { slug: 'iphone-15-pro' } });
+    const el = async (slug: string) => (await prisma.element.findUniqueOrThrow({ where: { slug } })).id;
+
+    // 6 disenos publicados en galeria (autor Estudio) + 2 guardados de demo
+    const galleryDesigns: { nombre: string; likes: number; items: { el: string; x: number; y: number; rot: number }[] }[] = [
+      { nombre: 'Atardecer', likes: 48, items: [{ el: 'sol', x: 30, y: 64, rot: 0 }, { el: 'sticker-ola', x: 38, y: 96, rot: 0 }, { el: 'concha', x: 50, y: 120, rot: 20 }] },
+      { nombre: 'Cielo nocturno', likes: 37, items: [{ el: 'luna-creciente', x: 24, y: 62, rot: 340 }, { el: 'estrella-oro', x: 46, y: 78, rot: 15 }, { el: 'sticker-constelacion', x: 36, y: 112, rot: 0 }] },
+      { nombre: 'Merienda', likes: 29, items: [{ el: 'fresa', x: 26, y: 66, rot: 10 }, { el: 'cereza', x: 48, y: 80, rot: 350 }, { el: 'helado', x: 34, y: 110, rot: 0 }] },
+      { nombre: 'Mininos', likes: 21, items: [{ el: 'gatito', x: 30, y: 68, rot: 0 }, { el: 'sticker-huella', x: 46, y: 88, rot: 25 }, { el: 'sticker-carita-gato', x: 38, y: 116, rot: 0 }] },
+      { nombre: 'Lacitos', likes: 16, items: [{ el: 'lazo-coqueta', x: 36, y: 62, rot: 0 }, { el: 'mini-lazo', x: 22, y: 90, rot: 15 }, { el: 'sticker-lazo', x: 46, y: 116, rot: 345 }] },
+      { nombre: 'Prado', likes: 12, items: [{ el: 'margarita', x: 26, y: 64, rot: 0 }, { el: 'abeja', x: 48, y: 82, rot: 30 }, { el: 'sticker-margarita', x: 36, y: 114, rot: 0 }] },
+    ];
+
+    const { randomBytes } = await import('node:crypto');
+    for (const [i, g] of galleryDesigns.entries()) {
+      const items: PlacedItem[] = g.items.map((it, j) => ({
+        instanceId: `g${i}-${j}`, elementId: it.el, xMm: it.x, yMm: it.y, rotationDeg: it.rot,
+      }));
+      const results = validarEscena(items, shapes, refSpec);
+      if ([...results.values()].some((r) => !r.valida)) {
+        throw new Error(`Diseno demo "${g.nombre}" invalido; ajustar coordenadas.`);
+      }
+      const elementos = [];
+      for (const [j, it] of g.items.entries()) {
+        elementos.push({ instanceId: `g${i}-${j}`, elementId: await el(it.el), xMm: it.x, yMm: it.y, rotationDeg: it.rot });
+      }
+      const precio = siliconaRosa.precioCentimos +
+        (await Promise.all(g.items.map(async (it) => (await prisma.element.findUniqueOrThrow({ where: { slug: it.el } })).precioCentimos))).reduce((a, b) => a + b, 0);
+      // Miniaturas pregeneradas con /dev/renders (SS10.5)
+      const thumbSlug = g.nombre.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '-');
+      const thumbnailUrl = `/renders/demo/${thumbSlug}.webp`;
+      const existing = await prisma.design.findFirst({ where: { userId: estudio.id, nombre: g.nombre } });
+      if (!existing) {
+        await prisma.design.create({
+          data: {
+            userId: estudio.id, nombre: g.nombre, deviceId: iphone15pro.id,
+            caseVariantId: siliconaRosa.id, elementos, thumbnailUrl,
+            precioTotalCache: precio, shareToken: randomBytes(20).toString('base64url'),
+            publicadoGaleria: true, autorVisible: true, likesCount: g.likes,
+          },
+        });
+      } else if (!existing.thumbnailUrl) {
+        await prisma.design.update({ where: { id: existing.id }, data: { thumbnailUrl } });
+      }
+    }
+
+    // Likes reales de admin/demo sobre los 2 primeros (para el orden "semana")
+    const top = await prisma.design.findMany({ where: { userId: estudio.id }, orderBy: { likesCount: 'desc' }, take: 2 });
+    for (const d of top) {
+      for (const u of [admin.id, demo.id]) {
+        await prisma.like.upsert({
+          where: { userId_designId: { userId: u, designId: d.id } },
+          create: { userId: u, designId: d.id },
+          update: {},
+        });
+      }
+    }
+
+    // 2 disenos guardados del usuario demo
+    const demoDesigns = [
+      { nombre: 'Mi funda', items: [{ el: 'corazon-clasico', x: 30, y: 70, rot: 0 }, { el: 'sticker-estrella', x: 48, y: 96, rot: 20 }] },
+      { nombre: 'Para el insti', items: [{ el: 'mariposa', x: 36, y: 66, rot: 0 }, { el: 'sticker-flor-retro', x: 30, y: 100, rot: 0 }, { el: 'mini-corazon', x: 52, y: 118, rot: 15 }] },
+    ];
+    for (const [i, g] of demoDesigns.entries()) {
+      const existing = await prisma.design.findFirst({ where: { userId: demo.id, nombre: g.nombre } });
+      if (existing) continue;
+      const elementos = [];
+      for (const [j, it] of g.items.entries()) {
+        elementos.push({ instanceId: `d${i}-${j}`, elementId: await el(it.el), xMm: it.x, yMm: it.y, rotationDeg: it.rot });
+      }
+      const precio = siliconaRosa.precioCentimos +
+        (await Promise.all(g.items.map(async (it) => (await prisma.element.findUniqueOrThrow({ where: { slug: it.el } })).precioCentimos))).reduce((a, b) => a + b, 0);
+      await prisma.design.create({
+        data: {
+          userId: demo.id, nombre: g.nombre, deviceId: iphone15pro.id,
+          caseVariantId: siliconaRosa.id, elementos, precioTotalCache: precio,
+          shareToken: randomBytes(20).toString('base64url'),
+        },
+      });
+    }
+    console.log('  demo: usuarios admin/demo/estudio, 6 en galeria, 2 guardados');
   }
 
-  // Ajustes globales (§11 Ajustes)
-  await prisma.appSetting.createMany({
-    data: [
-      { key: 'collisionMarginMm', value: 0.5 },
-      { key: 'heroClaim', value: 'Tu funda, tu rollo ✨' },
-      { key: 'gridDefaultOn', value: false },
-    ],
-  });
-
-  console.log(`✅ Seed completado (admin: ${admin.email})`);
+  console.log('Seed v4 completado.');
 }
 
 main()

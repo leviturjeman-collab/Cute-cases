@@ -12,7 +12,7 @@ export async function GET() {
   try {
     await requireAdmin();
     const devices = await prisma.deviceModel.findMany({
-      orderBy: [{ generacion: 'desc' }, { orden: 'asc' }],
+      orderBy: [{ generacion: 'desc' }, { nombre: 'asc' }],
     });
     return NextResponse.json({ devices });
   } catch (e) {
@@ -25,9 +25,9 @@ export async function POST(req: NextRequest) {
   try {
     const admin = await requireAdmin();
     const parsed = deviceSchema.safeParse(await req.json());
-    if (!parsed.success) return apiError('S-03', parsed.error.message);
+    if (!parsed.success) return apiError('VALIDATION', parsed.error.message);
     const device = await prisma.deviceModel.create({ data: parsed.data });
-    await audit(admin.id, 'crear', 'DeviceModel', device.id);
+    await audit(admin.id, 'create', 'DeviceModel', device.id);
     return NextResponse.json(device, { status: 201 });
   } catch (e) {
     return handleApiError(e);

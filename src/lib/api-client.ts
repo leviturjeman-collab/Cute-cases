@@ -1,6 +1,7 @@
 /**
- * Cliente de API mínimo: errores uniformes { code, message } (§12.3)
- * que la UI traduce con el diccionario (§17).
+ * Cliente de API (SS13): errores con envolvente uniforme
+ * { error: { code, message, detail? } }. `code` es estable y se mapea a
+ * microcopy en cliente (SS23); `message` es tecnico y nunca se muestra.
  */
 
 export class ApiClientError extends Error {
@@ -8,6 +9,7 @@ export class ApiClientError extends Error {
     public code: string,
     message: string,
     public status: number,
+    public detail?: unknown,
   ) {
     super(message);
   }
@@ -22,16 +24,18 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    let code = 'S-03';
+    let code = 'INTERNAL';
     let message = `HTTP ${res.status}`;
+    let detail: unknown;
     try {
-      const body = (await res.json()) as { code?: string; message?: string };
-      if (body.code) code = body.code;
-      if (body.message) message = body.message;
+      const body = (await res.json()) as { error?: { code?: string; message?: string; detail?: unknown } };
+      if (body.error?.code) code = body.error.code;
+      if (body.error?.message) message = body.error.message;
+      detail = body.error?.detail;
     } catch {
       // sin body JSON
     }
-    throw new ApiClientError(code, message, res.status);
+    throw new ApiClientError(code, message, res.status, detail);
   }
   return (await res.json()) as T;
 }

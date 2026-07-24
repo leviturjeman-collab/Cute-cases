@@ -4,48 +4,49 @@ import { forwardRef } from 'react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
-type Size = 'sm' | 'md' | 'lg';
+type Size = 'md' | 'lg';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
   size?: Size;
   loading?: boolean;
+  icon?: ReactNode;
   children: ReactNode;
 }
 
+// SS4.1: primary pink-700/blanco, secondary borde, ghost pink-500, danger error.
 const variantClasses: Record<Variant, string> = {
-  primary:
-    'bg-pink-600 text-white shadow-md hover:bg-pink-700 active:scale-[0.96] disabled:bg-pink-300',
+  primary: 'bg-pink-700 text-white hover:bg-pink-800 active:bg-pink-800 disabled:bg-text-disabled',
   secondary:
-    'bg-surface text-pink-700 border-2 border-pink-300 shadow-sm hover:border-pink-500 active:scale-[0.96] disabled:opacity-50',
-  ghost: 'bg-transparent text-pink-700 hover:bg-pink-200 active:scale-[0.96] disabled:opacity-50',
-  danger: 'bg-error text-white shadow-sm hover:opacity-90 active:scale-[0.96] disabled:opacity-50',
+    'border border-border bg-surface text-text hover:bg-surface-2 disabled:text-text-disabled',
+  ghost: 'bg-transparent text-pink-500 hover:bg-pink-100 disabled:text-text-disabled',
+  danger: 'bg-error text-white hover:opacity-90 disabled:opacity-50',
 };
 
 const sizeClasses: Record<Size, string> = {
-  sm: 'min-h-[36px] px-4 text-sm',
-  md: 'min-h-[44px] px-6 text-base',
-  lg: 'min-h-[56px] px-8 text-lg',
+  md: 'h-11 px-5 text-[15px]',
+  lg: 'h-[52px] px-6 text-[15px]',
 };
 
-/** Botón píldora con estados default/hover/pressed/focus/disabled/loading (§2.6). */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'primary', size = 'md', loading = false, className = '', children, ...rest },
+  { variant = 'primary', size = 'md', loading = false, icon, className = '', children, ...rest },
   ref,
 ) {
   return (
     <button
       ref={ref}
-      className={`inline-flex items-center justify-center gap-2 rounded-pill font-body font-bold transition-all duration-150 ease-bounce disabled:cursor-not-allowed ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-control font-body font-medium transition-all duration-120 active:scale-[0.98] disabled:cursor-not-allowed disabled:active:scale-100 ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
       disabled={loading || rest.disabled}
       aria-busy={loading || undefined}
       {...rest}
     >
-      {loading && (
+      {loading ? (
         <span
           aria-hidden
-          className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+          className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent"
         />
+      ) : (
+        icon && <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5">{icon}</span>
       )}
       {children}
     </button>

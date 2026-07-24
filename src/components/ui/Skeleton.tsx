@@ -1,14 +1,11 @@
-/** Skeleton de carga de marca (§2.6): pulso rosa suave. */
+/** SS4.10: bloques surface-2 con shimmer de 1,2 s que replican la geometria real. */
 export function Skeleton({ className = '' }: { className?: string }) {
-  return (
-    <div aria-hidden className={`animate-pulse rounded-thumb bg-pink-200/70 ${className}`} />
-  );
+  return <div aria-hidden className={`skeleton-shimmer rounded-thumb ${className}`} />;
 }
 
-/** Grid de skeletons para catálogos. */
-export function SkeletonGrid({ count = 6 }: { count?: number }) {
+export function SkeletonGrid({ count = 8 }: { count?: number }) {
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
       {Array.from({ length: count }, (_, i) => (
         <div key={i} className="flex flex-col gap-2">
           <Skeleton className="aspect-square w-full" />

@@ -1,16 +1,17 @@
 import type { ReactNode } from 'react';
 
-type BadgeVariant = 'tresD' | 'sticker' | 'temporada' | 'nuevo' | 'aviso';
+type BadgeVariant = 'tresD' | 'sticker' | 'temporada' | 'nuevo' | 'noDisponible' | 'casa';
 
+// SS4.11: Caption 12/500, radio 6; "No disponible" usa warning.
 const variantClasses: Record<BadgeVariant, string> = {
-  tresD: 'bg-pink-600 text-white',
-  sticker: 'bg-pink-200 text-pink-700',
-  temporada: 'bg-pink-500 text-white',
-  nuevo: 'bg-success text-white',
-  aviso: 'bg-error-bg text-error',
+  tresD: 'bg-pink-100 text-pink-700',
+  sticker: 'bg-surface-2 text-text-soft',
+  temporada: 'bg-pink-100 text-pink-700',
+  nuevo: 'bg-pink-100 text-pink-700',
+  noDisponible: 'bg-[#F7EED9] text-warning',
+  casa: 'bg-surface-2 text-text-soft',
 };
 
-/** Badge "3D" / "sticker" / "🎄 Temporada" / "Nuevo" (§2.6). */
 export function Badge({
   variant,
   children,
@@ -22,7 +23,7 @@ export function Badge({
 }) {
   return (
     <span
-      className={`inline-flex items-center rounded-pill px-2 py-0.5 text-xs font-extrabold ${variantClasses[variant]} ${className}`}
+      className={`inline-flex items-center rounded-badge px-1.5 py-0.5 text-xs font-medium ${variantClasses[variant]} ${className}`}
     >
       {children}
     </span>

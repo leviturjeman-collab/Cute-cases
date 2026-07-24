@@ -1,41 +1,42 @@
 import type { Metadata } from 'next';
-import { prisma } from '@/server/db';
+import { getTranslations } from 'next-intl/server';
+import { formatCentimos } from '@/lib/pricing';
+import { getSharedDesignPayload } from '@/server/shareService';
+import { PageShell } from '@/components/layout/PageShell';
 import { GiftPageClient } from './GiftPageClient';
 
+// SS5.1: SSR, noindex.
 export const dynamic = 'force-dynamic';
 
-/**
- * Página pública de diseño compartido / regalo (§8.2): OG dinámico para
- * previsualización bonita en WhatsApp/IG + noindex (§13).
- */
 export async function generateMetadata({
   params,
 }: {
   params: { shareToken: string };
 }): Promise<Metadata> {
-  try {
-    const design = await prisma.design.findUnique({
-      where: { shareToken: params.shareToken },
-      select: { nombre: true, shareNombre: true, thumbnailUrl: true },
-    });
-    if (!design) return { robots: { index: false } };
-    const title = design.shareNombre
-      ? `${design.shareNombre} quiere esta funda de regalo 💖`
-      : `${design.nombre} · Cute Cases`;
-    return {
-      title,
-      robots: { index: false, follow: false },
-      openGraph: {
-        title,
-        description: 'Una funda personalizada hecha con mucho amor en Cute Cases ✨',
-        images: design.thumbnailUrl ? [design.thumbnailUrl] : undefined,
-      },
-    };
-  } catch {
-    return { robots: { index: false } };
-  }
+  const t = await getTranslations('regalo');
+  const payload = await getSharedDesignPayload(params.shareToken);
+  if (!payload) return { robots: { index: false } };
+  return {
+    title: t('ogTitulo'),
+    description: t('ogDescripcion', { precio: formatCentimos(payload.precioCentimos) }),
+    robots: { index: false },
+    openGraph: {
+      title: t('ogTitulo'),
+      images: payload.thumbnailUrl ? [payload.thumbnailUrl] : undefined,
+    },
+  };
 }
 
-export default function GiftPage({ params }: { params: { shareToken: string } }) {
-  return <GiftPageClient shareToken={params.shareToken} />;
+/** Diseno compartido / regalo (SS6.8). */
+export default async function SharedDesignPage({
+  params,
+}: {
+  params: { shareToken: string };
+}) {
+  const payload = await getSharedDesignPayload(params.shareToken);
+  return (
+    <PageShell>
+      <GiftPageClient payload={payload} />
+    </PageShell>
+  );
 }

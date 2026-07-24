@@ -1,142 +1,181 @@
 'use client';
 
-import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useQuery } from '@tanstack/react-query';
-import { Header } from '@/components/layout/Header';
-import { Footer } from '@/components/layout/Footer';
-import { Button, Card, Confetti, EmptyState, Skeleton, useToast } from '@/components/ui';
+import { useQueryClient } from '@tanstack/react-query';
+import { Flag } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import { formatCentimos } from '@/lib/pricing';
-import type { ElementInstance, Polygon } from '@/lib/collision';
-import type { CatalogElement } from '@/editor/types';
-import { newInstanceId } from '@/editor/store';
+import { track } from '@/lib/analytics';
+import { Button, EmptyState, Input, Modal, useToast } from '@/components/ui';
+import type { SharedDesignPayload } from '@/server/shareService';
+import type { CatalogElement, DeviceSpec } from '@/editor/types';
 
-const CaseViewer = dynamic(() => import('@/editor/CaseViewer').then((m) => m.CaseViewer), {
-  ssr: false,
-  loading: () => <Skeleton className="h-full w-full" />,
-});
+const ProductViewer = dynamic(
+  () => import('@/editor/ProductViewer').then((m) => m.ProductViewer),
+  {
+    ssr: false,
+    loading: () => <div className="skeleton-shimmer h-full w-full rounded-card" aria-hidden />,
+  },
+);
 
-interface GiftData {
-  id: string;
-  nombre: string;
-  shareNombre: string | null;
-  device: { nombre: string; anchoMm: number; altoMm: number; radioEsquinaMm: number; cameraZone: Polygon };
-  caseVariant: { colorNombre: string; colorHex: string; material: string; nombre: string };
-  elementos: ElementInstance[];
-  elementosCatalogo: CatalogElement[];
-  desglose: { lines: { label: string; centimos: number }[]; totalCentimos: number };
-  disponible: boolean;
-}
-
-/** Página regalo (§8.2): visor solo-ver + desglose + CTA "Regalárselo 🎁". */
-export function GiftPageClient({ shareToken }: { shareToken: string }) {
+/**
+ * Contenido de /d/[token] (SS6.8): visor de solo visualizacion, texto segun
+ * configuracion del dueno, desglose y CTA de cesta. Estado amable si el
+ * diseno ya no esta disponible.
+ */
+export function GiftPageClient({ payload }: { payload: SharedDesignPayload | null }) {
   const t = useTranslations();
   const { showToast } = useToast();
-  const [confetti, setConfetti] = useState(0);
+  const queryClient = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportMotivo, setReportMotivo] = useState('');
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['gift', shareToken],
-    queryFn: () => api<GiftData>(`/api/d/${shareToken}`),
-  });
+  useEffect(() => {
+    if (payload?.disponible) track('regalo_abierto');
+  }, [payload?.disponible]);
 
   const catalog = useMemo(() => {
     const map = new Map<string, CatalogElement>();
-    for (const el of data?.elementosCatalogo ?? []) map.set(el.id, el);
-    return map;
-  }, [data]);
-
-  const instances = useMemo(
-    () => (data?.elementos ?? []).map((e) => ({ ...e, instanceId: e.instanceId ?? newInstanceId() })),
-    [data],
-  );
-
-  const giftIt = async () => {
-    if (!data) return;
-    try {
-      // En esta fase: añade el diseño a la cesta del visitante (§8.2)
-      await api('/api/cart', { method: 'POST', body: JSON.stringify({ designId: data.id }) });
-      setConfetti((c) => c + 1);
-      showToast(t('toasts.E02'), 'success');
-    } catch {
-      showToast(t('toasts.E15'), 'error');
+    for (const e of payload?.elementosCatalogo ?? []) {
+      map.set(e.id, e as unknown as CatalogElement);
     }
-  };
+    return map;
+  }, [payload?.elementosCatalogo]);
 
-  if (isError) {
+  if (!payload || !payload.disponible) {
     return (
-      <>
-        <Header />
-        <main className="mx-auto max-w-3xl px-4 pt-10">
-          <EmptyState emoji="🥺" title={t('errores.noEncontrado')} />
-        </main>
-        <Footer />
-      </>
+      <div className="mx-auto max-w-md px-4 py-16">
+        <EmptyState
+          title={t('regalo.noDisponibleTitulo')}
+          text={t('regalo.noDisponibleTexto')}
+          action={
+            <Link href="/modelo">
+              <Button>{t('common.acciones.crearElMio')}</Button>
+            </Link>
+          }
+        />
+      </div>
     );
   }
 
+  const device = payload.device as unknown as DeviceSpec;
+
+  const addToCart = async () => {
+    setAdding(true);
+    try {
+      await api('/api/cart', {
+        method: 'POST',
+        body: JSON.stringify({ designId: payload.id, cantidad: 1 }),
+      });
+      await queryClient.invalidateQueries({ queryKey: ['cart'] });
+      track('anadido_cesta', { origen: 'regalo' });
+      showToast(t('toasts.T02'), 'success');
+    } catch {
+      showToast(t('toasts.T15'), 'error');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const sendReport = async () => {
+    try {
+      await api(`/api/gallery/${payload.id}/report`, {
+        method: 'POST',
+        body: JSON.stringify({ motivo: reportMotivo.trim() || undefined }),
+      });
+      showToast(t('galeria.reportado'), 'success');
+    } catch {
+      showToast(t('toasts.T15'), 'error');
+    } finally {
+      setReportOpen(false);
+      setReportMotivo('');
+    }
+  };
+
   return (
-    <>
-      <Header />
-      <Confetti trigger={confetti} />
-      <main className="mx-auto max-w-3xl px-4 pt-4">
-        <div className="h-[44dvh] overflow-hidden rounded-card shadow-sm">
-          {data ? (
-            <CaseViewer
-              device={data.device}
-              variant={data.caseVariant as never}
-              instances={instances}
-              catalog={catalog}
-              view="trasera"
-            />
-          ) : (
-            <Skeleton className="h-full w-full" />
-          )}
+    <div className="mx-auto max-w-5xl px-4 py-6">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="h-[62svh] min-h-[380px] overflow-hidden rounded-card border border-border bg-surface-2 lg:h-[560px]">
+          <ProductViewer
+            device={device}
+            material={payload.caseVariant.material}
+            colorHex={payload.caseVariant.colorHex}
+            items={payload.elementos}
+            catalog={catalog}
+          />
         </div>
 
-        {isLoading || !data ? (
-          <Skeleton className="mt-4 h-32 w-full" />
-        ) : (
-          <Card className="mt-4">
-            <h1 className="text-center">
-              {data.shareNombre
-                ? t('regalo.titulo', { nombre: data.shareNombre })
-                : t('regalo.tituloSinNombre')}
-            </h1>
-            <p className="mt-1 text-center text-sm text-text-soft">
-              {data.nombre} · {data.device.nombre}
-            </p>
+        <div>
+          <p className="text-sm font-medium text-pink-700">
+            {payload.shareNombre
+              ? t('regalo.tituloConNombre', { nombre: payload.shareNombre })
+              : t('regalo.tituloSinNombre')}
+          </p>
+          <h1 className="mt-1 font-display text-[28px] font-semibold text-text">{payload.nombre}</h1>
+          <p className="mt-0.5 text-sm text-text-soft">
+            {payload.caseVariant.nombre} {payload.caseVariant.colorNombre} - {payload.device.nombre}
+          </p>
 
-            {!data.disponible && (
-              <p className="mt-4 rounded-thumb bg-error-bg px-4 py-3 text-center font-bold text-error">
-                {t('regalo.noDisponible')}
-              </p>
-            )}
-
-            <div className="mt-4">
-              <p className="mb-2 text-sm font-bold text-text-soft">{t('regalo.desglose')}</p>
-              <ul className="flex flex-col gap-1 text-sm">
-                {data.desglose.lines.map((line, i) => (
-                  <li key={i} className="flex justify-between">
-                    <span className="truncate">{line.label}</span>
-                    <span className="font-bold">{formatCentimos(line.centimos)}</span>
-                  </li>
-                ))}
-                <li className="mt-1 flex justify-between border-t-2 border-pink-100 pt-2 font-display font-bold">
-                  <span>{t('cesta.total')}</span>
-                  <span className="text-pink-600">{formatCentimos(data.desglose.totalCentimos)}</span>
+          {/* Desglose de precio (SS6.8) */}
+          <div className="mt-5 rounded-card border border-border bg-surface p-4">
+            <h2 className="mb-2 font-display text-[15px] font-semibold text-text">
+              {t('regalo.desglose')}
+            </h2>
+            <ul className="space-y-1.5 text-sm">
+              {payload.desglose.lines.map((line, i) => (
+                <li key={i} className="flex items-baseline justify-between gap-3">
+                  <span className="text-text-soft">{line.label}</span>
+                  <span className="tabular text-text">{formatCentimos(line.centimos)}</span>
                 </li>
-              </ul>
+              ))}
+            </ul>
+            <div className="mt-3 flex items-baseline justify-between border-t border-border pt-3">
+              <span className="font-medium text-text">{t('common.precio.total')}</span>
+              <span className="tabular text-[20px] font-semibold text-text">
+                {formatCentimos(payload.precioCentimos)}
+              </span>
             </div>
+          </div>
 
-            <Button size="lg" className="mt-5 w-full" disabled={!data.disponible} onClick={() => void giftIt()}>
-              {t('regalo.cta')}
+          <Button size="lg" className="mt-4 w-full sm:w-auto" onClick={addToCart} loading={adding}>
+            {t('common.acciones.anadirCesta')}
+          </Button>
+
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={() => setReportOpen(true)}
+              className="inline-flex items-center gap-1.5 text-sm text-text-soft hover:text-text"
+            >
+              <Flag size={14} aria-hidden />
+              {t('galeria.reportar')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Reporte (SS16.3): motivo opcional, max 200 */}
+      <Modal open={reportOpen} onClose={() => setReportOpen(false)} title={t('galeria.reportar')}>
+        <div className="space-y-4">
+          <Input
+            label={t('galeria.reportarMotivo')}
+            value={reportMotivo}
+            maxLength={200}
+            showCount
+            onChange={(e) => setReportMotivo(e.target.value)}
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setReportOpen(false)}>
+              {t('common.acciones.cancelar')}
             </Button>
-          </Card>
-        )}
-      </main>
-      <Footer />
-    </>
+            <Button onClick={sendReport}>{t('common.acciones.enviar')}</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
   );
 }

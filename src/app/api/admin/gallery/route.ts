@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   try {
     const admin = await requireAdmin();
     const parsed = moderateSchema.safeParse(await req.json());
-    if (!parsed.success) return apiError('S-03', 'Payload inválido');
+    if (!parsed.success) return apiError('VALIDATION', 'Payload inválido');
     const { designId, accion, reportId } = parsed.data;
 
     await prisma.design.update({
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
         data: { estado: accion === 'ocultar' ? 'oculto' : 'revisado' },
       });
     }
-    await audit(admin.id, 'actualizar', 'Design(galeria)', designId);
+    await audit(admin.id, 'update', 'Design(galeria)', designId);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return handleApiError(e);

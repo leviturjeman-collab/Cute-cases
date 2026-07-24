@@ -12,11 +12,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const admin = await requireAdmin();
     const parsed = variantSchema.safeParse(await req.json());
-    if (!parsed.success) return apiError('S-03', parsed.error.message);
+    if (!parsed.success) return apiError('VALIDATION', parsed.error.message);
     const variant = await prisma.caseVariant.create({
       data: { ...parsed.data, caseBaseId: params.id },
     });
-    await audit(admin.id, 'crear', 'CaseVariant', variant.id);
+    await audit(admin.id, 'create', 'CaseVariant', variant.id);
     return NextResponse.json(variant, { status: 201 });
   } catch (e) {
     return handleApiError(e);

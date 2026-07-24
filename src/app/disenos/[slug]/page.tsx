@@ -1,162 +1,96 @@
-'use client';
+import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
+import { prisma } from '@/server/db';
+import { compatibleDeviceIdsForPreset, type PresetData } from '@/server/presetService';
+import { PageShell } from '@/components/layout/PageShell';
+import { PresetFichaClient, type PresetDetalle } from './PresetFichaClient';
 
-import { useEffect, useMemo, useState } from 'react';
-import dynamic from 'next/dynamic';
-import { useTranslations } from 'next-intl';
-import { useQuery } from '@tanstack/react-query';
-import { Header } from '@/components/layout/Header';
-import { Footer } from '@/components/layout/Footer';
-import { Button, Card, EmptyState, PriceTag, Select, Skeleton, useToast, Confetti } from '@/components/ui';
-import { api } from '@/lib/api-client';
-import type { ElementInstance, Polygon } from '@/lib/collision';
-import type { CatalogElement } from '@/editor/types';
-import { newInstanceId } from '@/editor/store';
+export const revalidate = 300;
 
-const CaseViewer = dynamic(() => import('@/editor/CaseViewer').then((m) => m.CaseViewer), {
-  ssr: false,
-  loading: () => <Skeleton className="h-full w-full" />,
-});
+async function getPreset(slug: string): Promise<PresetDetalle | null> {
+  const preset = await prisma.presetDesign.findUnique({ where: { slug } });
+  if (!preset || !preset.publicado) return null;
 
-interface PresetDetail {
-  id: string;
-  slug: string;
-  nombre: string;
-  precioCentimos: number;
-  elementos: ElementInstance[];
-  caseVariantId: string | null;
-  caseBase: {
-    nombre: string;
-    material: string;
-    variantes: { id: string; colorNombre: string; colorHex: string }[];
-    compatibles: { id: string; nombre: string; anchoMm: number; altoMm: number; radioEsquinaMm: number; cameraZone: Polygon }[];
-  } | null;
-  elementosCatalogo: CatalogElement[];
+  const data = preset.designData as PresetData;
+  const compatibleIds = await compatibleDeviceIdsForPreset(preset.id);
+  const devices = await prisma.deviceModel.findMany({
+    where: { id: { in: compatibleIds }, activo: true },
+    orderBy: [{ generacion: 'desc' }, { nombre: 'asc' }],
+  });
+  const caseBase = data.caseSlug
+    ? await prisma.caseBase.findUnique({ where: { slug: data.caseSlug }, include: { variantes: true } })
+    : null;
+  const variant = caseBase?.variantes.find((v) => v.id === data.caseVariantId) ?? null;
+  const elementIds = [...new Set((data.elementos ?? []).map((e) => e.elementId))];
+  const elements = await prisma.element.findMany({ where: { id: { in: elementIds } } });
+
+  return {
+    id: preset.id,
+    slug: preset.slug,
+    nombre: preset.nombre,
+    precioCentimos: preset.precioCentimos,
+    fotos: preset.fotos as string[],
+    material: caseBase?.material ?? 'silicona',
+    colorHex: variant?.colorHex ?? '#F8C8DC',
+    fundaNombre: caseBase && variant ? `${caseBase.nombre} ${variant.colorNombre}` : null,
+    elementos: (data.elementos ?? []).map((e, i) => ({
+      instanceId: e.instanceId ?? `preset-${i}`,
+      elementId: e.elementId,
+      xMm: e.xMm,
+      yMm: e.yMm,
+      rotationDeg: e.rotationDeg,
+      letterChar: e.letterChar ?? undefined,
+    })),
+    compatibles: devices.map((d) => ({
+      id: d.id,
+      slug: d.slug,
+      nombre: d.nombre,
+      generacion: d.generacion,
+      anchoMm: d.anchoMm,
+      altoMm: d.altoMm,
+      radioEsquinaMm: d.radioEsquinaMm,
+      grosorMm: d.grosorMm,
+      cameraZone: d.cameraZone as { x: number; y: number }[],
+      moduloForma: d.moduloForma,
+    })),
+    elementosCatalogo: elements.map((e) => ({
+      id: e.id,
+      slug: e.slug,
+      nombre: e.nombre,
+      tipo: e.tipo as 'charm3d' | 'plano',
+      categoria: e.categoria,
+      precioCentimos: e.precioCentimos,
+      anchoMm: e.anchoMm,
+      altoMm: e.altoMm,
+      profundidadMm: e.profundidadMm,
+      recipe: e.recipe,
+      recipeParams: e.recipeParams as Record<string, unknown> | null,
+      assetUrl: e.assetUrl,
+      hitbox: e.hitbox as never,
+      acabado: e.acabado,
+      colores: e.colores as string[],
+      letraChar: e.letraChar,
+      esNuevo: e.esNuevo,
+    })),
+  };
 }
 
-/** Ficha de preestablecido (§5.6): visor 3D giratorio, sin edición. */
-export default function PresetFichaPage({ params }: { params: { slug: string } }) {
-  const t = useTranslations();
-  const { showToast } = useToast();
-  const [deviceId, setDeviceId] = useState<string | null>(null);
-  const [confetti, setConfetti] = useState(0);
-
-  const { data: preset, isLoading, isError } = useQuery({
-    queryKey: ['preset', params.slug],
-    queryFn: () => api<PresetDetail>(`/api/presets/${params.slug}`),
-  });
-
-  useEffect(() => {
-    if (preset?.caseBase && !deviceId) {
-      setDeviceId(preset.caseBase.compatibles[0]?.id ?? null);
-    }
-  }, [preset, deviceId]);
-
-  const device = preset?.caseBase?.compatibles.find((d) => d.id === deviceId) ?? null;
-  const variant = preset?.caseBase?.variantes.find((v) => v.id === preset.caseVariantId) ??
-    preset?.caseBase?.variantes[0] ?? null;
-
-  const catalog = useMemo(() => {
-    const map = new Map<string, CatalogElement>();
-    for (const el of preset?.elementosCatalogo ?? []) map.set(el.id, el);
-    return map;
-  }, [preset]);
-
-  const instances = useMemo(
-    () =>
-      (preset?.elementos ?? []).map((e) => ({
-        ...e,
-        instanceId: e.instanceId ?? newInstanceId(),
-      })),
-    [preset],
-  );
-
-  const addToCart = async () => {
-    if (!preset) return;
-    try {
-      await api('/api/cart', { method: 'POST', body: JSON.stringify({ presetId: preset.id }) });
-      setConfetti((c) => c + 1);
-      showToast(t('toasts.E02'), 'success');
-    } catch {
-      showToast(t('toasts.E15'), 'error');
-    }
+export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
+  const preset = await prisma.presetDesign.findUnique({ where: { slug: params.slug } });
+  if (!preset || !preset.publicado) return {};
+  return {
+    title: preset.nombre,
+    openGraph: { images: (preset.fotos as string[]).slice(0, 1) },
   };
+}
 
-  const share = async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      showToast(t('toasts.E03'), 'success');
-    } catch {
-      showToast(t('toasts.E15'), 'error');
-    }
-  };
-
-  if (isError) {
-    return (
-      <>
-        <Header />
-        <main className="mx-auto max-w-3xl px-4 pt-10">
-          <EmptyState emoji="🥺" title={t('errores.noEncontrado')} />
-        </main>
-        <Footer />
-      </>
-    );
-  }
-
+/** Ficha de preestablecido (SS6.5): visor 3D de solo visualizacion. */
+export default async function PresetPage({ params }: { params: { slug: string } }) {
+  const preset = await getPreset(params.slug);
+  if (!preset) notFound();
   return (
-    <>
-      <Header />
-      <Confetti trigger={confetti} />
-      <main className="mx-auto max-w-3xl px-4 pt-4">
-        <div className="h-[46dvh] overflow-hidden rounded-card shadow-sm">
-          {device && variant && preset ? (
-            <CaseViewer
-              device={device}
-              variant={{ ...variant, material: preset.caseBase!.material }}
-              instances={instances}
-              catalog={catalog}
-              view="trasera"
-            />
-          ) : (
-            <Skeleton className="h-full w-full" />
-          )}
-        </div>
-
-        {isLoading || !preset ? (
-          <Skeleton className="mt-4 h-24 w-full" />
-        ) : (
-          <Card className="mt-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h1>{preset.nombre}</h1>
-                <p className="text-sm text-text-soft">{t('disenos.precioCerrado')}</p>
-              </div>
-              <PriceTag centimos={preset.precioCentimos} />
-            </div>
-
-            {preset.caseBase && preset.caseBase.compatibles.length > 0 && (
-              <Select
-                label={t('disenos.eligeModelo')}
-                className="mt-4"
-                value={deviceId ?? ''}
-                onChange={(e) => setDeviceId(e.target.value)}
-                options={preset.caseBase.compatibles.map((d) => ({ value: d.id, label: d.nombre }))}
-              />
-            )}
-
-            <p className="mt-3 text-xs text-text-soft">{t('disenos.noEditable')}</p>
-
-            <div className="mt-5 flex flex-col gap-2">
-              <Button size="lg" onClick={() => void addToCart()}>
-                {t('common.acciones.anadirCesta')}
-              </Button>
-              <Button size="lg" variant="secondary" onClick={() => void share()}>
-                {t('common.acciones.compartir')}
-              </Button>
-            </div>
-          </Card>
-        )}
-      </main>
-      <Footer />
-    </>
+    <PageShell>
+      <PresetFichaClient preset={preset} />
+    </PageShell>
   );
 }
