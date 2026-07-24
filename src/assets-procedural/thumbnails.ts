@@ -75,8 +75,12 @@ async function dbSet(key: string, value: string): Promise<void> {
   });
 }
 
+// E2.4/E4: bump de version del hash => invalida cc.thumbs y el panel se
+// regenera solo con los materiales/stickers nuevos.
+const THUMB_VERSION = 'v2';
+
 function hashRecipe(recipe: string, spec: ElementSpec): string {
-  const raw = JSON.stringify([recipe, spec.anchoMm, spec.altoMm, spec.profundidadMm, spec.acabado, spec.colores, spec.letraChar, spec.recipeParams]);
+  const raw = JSON.stringify([THUMB_VERSION, recipe, spec.anchoMm, spec.altoMm, spec.profundidadMm, spec.acabado, spec.colores, spec.letraChar, spec.recipeParams]);
   let h = 0;
   for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);

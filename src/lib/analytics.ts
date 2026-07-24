@@ -24,7 +24,21 @@ export type AnalyticsEvent =
   | 'anadido_cesta'
   | 'galeria_publicado'
   | 'like'
-  | 'preset_visto';
+  | 'preset_visto'
+  // Telemetria nueva del editor (anexo v4.3, Parte V)
+  | 'reencuadre_usado'
+  | 'asa_rotacion_usada'
+  | 'guia_capturada'
+  | 'pieza_duplicada'
+  | 'pieza_bloqueada'
+  | 'variante_cambiada_en_editor'
+  | 'busqueda_elementos'
+  | 'favorito_marcado'
+  | 'composicion_aplicada'
+  | 'sorpresa_generada'
+  | 'hint_completado'
+  | 'espacio_bajo_mostrado'
+  | 'deshacer_toast_usado';
 
 export function hasConsent(): boolean {
   try {

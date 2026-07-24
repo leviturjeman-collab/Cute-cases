@@ -160,6 +160,8 @@ model User {
   deviceId        String?
   // No está en el modelo de §12 pero lo exige §17 ("desactivar cuenta"):
   activo          Boolean @default(true)
+  // Favoritos del editor (anexo v4.3 N8): Element.id[], merge por unión
+  favoritos       Json    @default("[]")
 
   designs   Design[]
   likes     Like[]

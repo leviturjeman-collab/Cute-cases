@@ -4,17 +4,18 @@ import { Suspense, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
-import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
+import { ContactShadows, Environment, OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { buildCaseGeometry, buildElementMesh, mmToWorld } from '@/assets-procedural';
+import { computeFitDistance, computeFitTargetY, computePieceFitDistance } from './camera/fit';
 import type { CatalogElement, DeviceSpec, SnapView } from './types';
 import { SNAP_POSES } from './types';
 import type { PlacedItem } from '@/lib/collision';
 
 /**
- * Visor 3D v4: escena con el estandar de realismo (SS9.1) y camara de orbita
- * por arrastre directo con limites y amortiguacion (SS7.3, D3).
- * Compartido por editor, fichas, preestablecidos y pagina de regalo.
+ * Visor 3D v4.3: estandar de realismo (SS9.1, E2/E3) con HDR de estudio
+ * propio, encuadre derivado del fov y el area util (E1), asa de rotacion
+ * (E5) y guias entre piezas (E6). Compartido por editor, fichas y regalo.
  */
 
 const DEG = Math.PI / 180;
@@ -25,6 +26,22 @@ export interface ItemVisualState {
   collided?: boolean;
   expired?: boolean;
   ghost?: boolean;
+  locked?: boolean;
+}
+
+/** Guia de alineacion (E6): segmento en mm de dispositivo. */
+export interface GuideLine {
+  axis: 'v' | 'h';
+  posMm: number;
+  fromMm?: number;
+  toMm?: number;
+}
+
+/** Encaje a una pieza (N5); null = funda completa. */
+export interface FrameTarget {
+  xMm: number;
+  yMm: number;
+  sizeMm: number;
 }
 
 export interface Viewer3DProps {
@@ -35,7 +52,7 @@ export interface Viewer3DProps {
   catalog: ReadonlyMap<string, CatalogElement>;
   visualStates?: ReadonlyMap<string, ItemVisualState>;
   showGrid?: boolean;
-  guides?: { v?: number | null; h?: number | null };
+  guides?: GuideLine[];
   lowPerf?: boolean;
   /** Pose objetivo de un chip de vista; null = control libre del usuario. */
   snapTarget?: SnapView | null;
@@ -46,10 +63,38 @@ export interface Viewer3DProps {
   onBackgroundTap?: () => void;
   controlsEnabled?: boolean;
   controlsRef?: (c: OrbitControlsImpl | null) => void;
+  /** Franjas de UI superpuesta al canvas (E1); el padding externo ya no cuenta. */
+  occlusions?: { topPx: number; bottomPx: number };
+  /** Incrementar para reencuadrar explicitamente (boton, doble tap). */
+  fitSignal?: number;
+  /** Pieza a encuadrar (N5); null = encuadre de funda completa. */
+  frameTarget?: FrameTarget | null;
+  /** Asa de rotacion (E5) sobre esta pieza. */
+  rotationHandleFor?: { item: PlacedItem; element: CatalogElement } | null;
+  onHandlePointerDown?: (instanceId: string, e: ThreeEvent<PointerEvent>) => void;
   className?: string;
 }
 
-/** Rig: limites SS7.3 + interpolacion de 400 ms hacia los chips de vista. */
+interface CamAnim {
+  fromAz: number;
+  toAz: number;
+  fromPol: number;
+  toPol: number;
+  fromDist: number;
+  toDist: number;
+  fromTx: number;
+  toTx: number;
+  fromTy: number;
+  toTy: number;
+  start: number;
+  dur: number;
+  notify?: boolean;
+}
+
+/**
+ * Rig E1: limites SS7.3, encaje por formula (nunca constante estetica),
+ * target desplazado al centro del area util y reencuadres animados.
+ */
 function CameraRig({
   device,
   snapTarget,
@@ -57,42 +102,176 @@ function CameraRig({
   onCameraChange,
   controlsEnabled,
   controlsRef,
-}: Pick<Viewer3DProps, 'device' | 'snapTarget' | 'onSnapReached' | 'onCameraChange' | 'controlsEnabled' | 'controlsRef'>) {
+  occlusions,
+  fitSignal,
+  frameTarget,
+}: Pick<
+  Viewer3DProps,
+  | 'device'
+  | 'snapTarget'
+  | 'onSnapReached'
+  | 'onCameraChange'
+  | 'controlsEnabled'
+  | 'controlsRef'
+  | 'occlusions'
+  | 'fitSignal'
+  | 'frameTarget'
+>) {
   const controls = useRef<OrbitControlsImpl | null>(null);
-  const { camera, gl } = useThree();
-  const anim = useRef<{ fromAz: number; fromPol: number; toAz: number; toPol: number; start: number } | null>(null);
-  const baseDist = device.altoMm * 1.15;
+  const { camera, gl, size } = useThree();
+  const anim = useRef<CamAnim | null>(null);
+  const booted = useRef(false);
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const occTop = occlusions?.topPx ?? 0;
+  const occBottom = occlusions?.bottomPx ?? 0;
+  const occ = useMemo(() => ({ topPx: occTop, bottomPx: occBottom }), [occTop, occBottom]);
+  const dFit = computeFitDistance(device, size, occ);
+  const fitTy = computeFitTargetY(dFit, size, occ);
 
   useEffect(() => {
     controlsRef?.(controls.current);
   });
 
+  // Hook de depuracion para el test e2e matricial (solo desarrollo)
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') return;
+    (window as unknown as { __ccFit?: object }).__ccFit = {
+      dFit,
+      fitTy,
+      size: { width: size.width, height: size.height },
+      device: { anchoMm: device.anchoMm, altoMm: device.altoMm },
+      occlusions: occ,
+      getCamera: () => {
+        const c = controls.current;
+        if (!c) return null;
+        return {
+          distance: c.object.position.distanceTo(c.target),
+          targetY: c.target.y,
+          azimuthDeg: c.getAzimuthalAngle() / DEG,
+          polarDeg: c.getPolarAngle() / DEG,
+        };
+      },
+    };
+  }, [dFit, fitTy, size.width, size.height, device.anchoMm, device.altoMm, occ]);
+
+  const startAnim = (to: Partial<CamAnim> & { dur: number; notify?: boolean }) => {
+    const c = controls.current;
+    if (!c) return;
+    anim.current = {
+      fromAz: c.getAzimuthalAngle(),
+      toAz: to.toAz ?? c.getAzimuthalAngle(),
+      fromPol: c.getPolarAngle(),
+      toPol: to.toPol ?? c.getPolarAngle(),
+      fromDist: c.object.position.distanceTo(c.target),
+      toDist: to.toDist ?? c.object.position.distanceTo(c.target),
+      fromTx: c.target.x,
+      toTx: to.toTx ?? c.target.x,
+      fromTy: c.target.y,
+      toTy: to.toTy ?? c.target.y,
+      start: performance.now(),
+      dur: to.dur,
+      notify: to.notify,
+    };
+  };
+
+  // Chips de vista (SS7.3): restauran angulos Y distancia Y target (E1.4)
   useEffect(() => {
     if (!snapTarget || !controls.current) return;
     const pose = SNAP_POSES[snapTarget];
-    anim.current = {
-      fromAz: controls.current.getAzimuthalAngle(),
-      fromPol: controls.current.getPolarAngle(),
+    startAnim({
       toAz: pose.azimuthDeg * DEG,
       toPol: pose.polarDeg * DEG,
-      start: performance.now(),
-    };
+      toDist: dFit,
+      toTx: 0,
+      toTy: fitTy,
+      dur: 400,
+      notify: true,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapTarget]);
+
+  // Reencuadre explicito (boton Reencuadrar / doble tap, E1.4)
+  useEffect(() => {
+    if (!fitSignal || !controls.current) return;
+    startAnim({
+      toAz: SNAP_POSES.trasera.azimuthDeg * DEG,
+      toPol: SNAP_POSES.trasera.polarDeg * DEG,
+      toDist: dFit,
+      toTx: 0,
+      toTy: fitTy,
+      dur: 250,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitSignal]);
+
+  // Zoom a pieza (N5): viaje de 300 ms manteniendo la vista trasera
+  useEffect(() => {
+    const c = controls.current;
+    if (!c) return;
+    if (frameTarget) {
+      const [wx, wy] = mmToWorld(frameTarget.xMm, frameTarget.yMm, device);
+      startAnim({
+        toAz: SNAP_POSES.trasera.azimuthDeg * DEG,
+        toPol: SNAP_POSES.trasera.polarDeg * DEG,
+        toDist: Math.max(computePieceFitDistance(frameTarget.sizeMm, size), dFit * 0.45),
+        toTx: wx,
+        toTy: wy,
+        dur: 300,
+      });
+    } else if (booted.current) {
+      startAnim({ toDist: dFit, toTx: 0, toTy: fitTy, dur: 300 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frameTarget]);
+
+  // Reencuadre reactivo (E1.2): resize/orientacion/occlusions, debounce 150 ms
+  useEffect(() => {
+    const c = controls.current;
+    if (!c) return;
+    if (!booted.current) {
+      booted.current = true;
+      c.target.set(0, fitTy, 0);
+      const az = SNAP_POSES.trasera.azimuthDeg * DEG;
+      const pol = SNAP_POSES.trasera.polarDeg * DEG;
+      c.object.position.set(
+        dFit * Math.sin(pol) * Math.sin(az),
+        fitTy + dFit * Math.cos(pol),
+        dFit * Math.sin(pol) * Math.cos(az),
+      );
+      c.update();
+      return;
+    }
+    if (frameTarget) return;
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => {
+      startAnim({ toDist: dFit, toTy: fitTy, dur: 250 });
+    }, 150);
+    return () => {
+      if (debounce.current) clearTimeout(debounce.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dFit, fitTy]);
 
   useFrame(() => {
     const c = controls.current;
     if (!c) return;
     if (anim.current) {
-      const t = Math.min(1, (performance.now() - anim.current.start) / 400);
+      const a = anim.current;
+      const t = Math.min(1, (performance.now() - a.start) / a.dur);
       const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // ease-in-out
-      const az = anim.current.fromAz + (anim.current.toAz - anim.current.fromAz) * e;
-      const pol = anim.current.fromPol + (anim.current.toPol - anim.current.fromPol) * e;
-      c.setAzimuthalAngle(az);
-      c.setPolarAngle(pol);
+      const az = a.fromAz + (a.toAz - a.fromAz) * e;
+      const pol = a.fromPol + (a.toPol - a.fromPol) * e;
+      const dist = a.fromDist + (a.toDist - a.fromDist) * e;
+      c.target.x = a.fromTx + (a.toTx - a.fromTx) * e;
+      c.target.y = a.fromTy + (a.toTy - a.fromTy) * e;
+      const offset = new THREE.Vector3().setFromSphericalCoords(dist, pol, az);
+      c.object.position.copy(c.target).add(offset);
       c.update();
       if (t >= 1) {
+        const notify = a.notify;
         anim.current = null;
-        onSnapReached?.();
+        if (notify) onSnapReached?.();
       }
     }
     onCameraChange?.({
@@ -116,8 +295,9 @@ function CameraRig({
       maxPolarAngle={125 * DEG}
       minAzimuthAngle={-80 * DEG}
       maxAzimuthAngle={80 * DEG}
-      minDistance={baseDist / 1.8}
-      maxDistance={baseDist / 0.8}
+      // E1.3: alejar al maximo = funda completa; no existe "mas lejos y cortada"
+      minDistance={dFit * 0.45}
+      maxDistance={dFit}
     />
   );
 }
@@ -144,8 +324,6 @@ function CaseModel({ device, material, colorHex }: { device: DeviceSpec; materia
       if (m.geometry) m.geometry.dispose();
     });
   }, [group]);
-  // La funda vive en el plano XZ del mundo? No: XY con +Z hacia la camara.
-  // Rotamos el grupo para que la trasera mire al eje +Z de orbita (y-up).
   return <primitive object={group} />;
 }
 
@@ -206,7 +384,6 @@ function ItemNode({
 
   const overlayGeo = useMemo(() => new THREE.ShapeGeometry(silhouetteShape(element)), [element]);
   const [wx, wy] = mmToWorld(item.xMm, item.yMm, device);
-  const opacity = state?.ghost ? 0.75 : 1;
 
   return (
     <group
@@ -231,7 +408,7 @@ function ItemNode({
           />
         </mesh>
       )}
-      <group scale={1} visible>
+      <group>
         <primitive object={mesh} />
         {(state?.expired || state?.ghost) && (
           <mesh geometry={overlayGeo} position={[0, 0, (element.profundidadMm ?? 1) + 0.4]}>
@@ -244,7 +421,55 @@ function ItemNode({
           </mesh>
         )}
       </group>
-      {opacity < 1 && null}
+    </group>
+  );
+}
+
+/**
+ * Asa de rotacion (E5): circulo conectado por un vastago al borde superior
+ * de la caja rotada de la pieza; participa del arbitraje como origen propio.
+ */
+function RotationHandle({
+  item,
+  element,
+  device,
+  onPointerDown,
+}: {
+  item: PlacedItem;
+  element: CatalogElement;
+  device: DeviceSpec;
+  onPointerDown?: (id: string, e: ThreeEvent<PointerEvent>) => void;
+}) {
+  const [wx, wy] = mmToWorld(item.xMm, item.yMm, device);
+  const stemLen = 5;
+  const topY = element.altoMm / 2;
+  const cy = topY + stemLen;
+  const zLift = (element.profundidadMm ?? 1) + 0.6;
+  return (
+    <group position={[wx, wy, 0.05]} rotation={[0, 0, -item.rotationDeg * DEG]}>
+      <mesh position={[0, topY + stemLen / 2, zLift]}>
+        <planeGeometry args={[0.25, stemLen]} />
+        <meshBasicMaterial color="#E84393" depthWrite={false} depthTest={false} transparent />
+      </mesh>
+      <mesh position={[0, cy, zLift]} renderOrder={30}>
+        <ringGeometry args={[1.7, 2.4, 32]} />
+        <meshBasicMaterial color="#E84393" depthWrite={false} depthTest={false} transparent />
+      </mesh>
+      <mesh position={[0, cy, zLift]} renderOrder={30}>
+        <circleGeometry args={[1.7, 32]} />
+        <meshBasicMaterial color="#FFFFFF" depthWrite={false} depthTest={false} transparent opacity={0.9} />
+      </mesh>
+      {/* Zona tactil generosa (44 px equivalentes) */}
+      <mesh
+        position={[0, cy, zLift + 0.1]}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          onPointerDown?.(item.instanceId, e);
+        }}
+      >
+        <circleGeometry args={[4.2, 24]} />
+        <meshBasicMaterial visible={false} />
+      </mesh>
     </group>
   );
 }
@@ -271,6 +496,40 @@ function Grid5({ device }: { device: DeviceSpec }) {
   );
 }
 
+/** Guias E6: lineas 1 px --pink-500 que abarcan las piezas implicadas. */
+function Guides({ device, guides }: { device: DeviceSpec; guides: GuideLine[] }) {
+  return (
+    <>
+      {guides.map((g, i) => {
+        if (g.axis === 'v') {
+          const from = g.fromMm ?? 0;
+          const to = g.toMm ?? device.altoMm;
+          const [wx] = mmToWorld(g.posMm, 0, device);
+          const [, wy1] = mmToWorld(0, from, device);
+          const [, wy2] = mmToWorld(0, to, device);
+          return (
+            <mesh key={i} position={[wx, (wy1 + wy2) / 2, 0.14]}>
+              <planeGeometry args={[0.35, Math.abs(wy2 - wy1)]} />
+              <meshBasicMaterial color="#E84393" transparent opacity={0.85} depthWrite={false} />
+            </mesh>
+          );
+        }
+        const from = g.fromMm ?? 0;
+        const to = g.toMm ?? device.anchoMm;
+        const [, wy] = mmToWorld(0, g.posMm, device);
+        const [wx1] = mmToWorld(from, 0, device);
+        const [wx2] = mmToWorld(to, 0, device);
+        return (
+          <mesh key={i} position={[(wx1 + wx2) / 2, wy, 0.14]}>
+            <planeGeometry args={[Math.abs(wx2 - wx1), 0.35]} />
+            <meshBasicMaterial color="#E84393" transparent opacity={0.85} depthWrite={false} />
+          </mesh>
+        );
+      })}
+    </>
+  );
+}
+
 export function Viewer3D({
   device,
   material,
@@ -289,9 +548,14 @@ export function Viewer3D({
   onBackgroundTap,
   controlsEnabled,
   controlsRef,
+  occlusions,
+  fitSignal,
+  frameTarget,
+  rotationHandleFor,
+  onHandlePointerDown,
   className = '',
 }: Viewer3DProps) {
-  const baseDist = device.altoMm * 1.15;
+  const baseDist = device.altoMm * 1.95;
   const initial = SNAP_POSES.trasera;
 
   return (
@@ -327,9 +591,12 @@ export function Viewer3D({
           onCameraChange={onCameraChange}
           controlsEnabled={controlsEnabled}
           controlsRef={controlsRef}
+          occlusions={occlusions}
+          fitSignal={fitSignal}
+          frameTarget={frameTarget}
         />
 
-        {/* SS9.1: luz principal direccional 1.2 (elev 35, az 30) + relleno 0.35 */}
+        {/* SS9.1: principal 1.2 con sombras + relleno 0.35 + rim trasera 0.25 (E2.3) */}
         <directionalLight
           position={[
             Math.cos(35 * DEG) * Math.sin(30 * DEG) * 200,
@@ -345,32 +612,21 @@ export function Viewer3D({
           shadow-camera-bottom={-device.altoMm}
         />
         <directionalLight position={[-120, -40, -160]} intensity={0.35} />
+        <directionalLight position={[40, 120, -220]} intensity={0.25} />
 
         <Suspense fallback={null}>
-          {/* Entorno de estudio neutro generado por lightformers (sin red) */}
-          <Environment resolution={lowPerf ? 64 : 256} frames={1} environmentIntensity={0.9}>
-            <Lightformer intensity={2.2} position={[0, 4, 6]} scale={[9, 5, 1]} color="#ffffff" />
-            <Lightformer intensity={1.1} position={[-6, 2, -2]} rotation-y={Math.PI / 2} scale={[6, 4, 1]} color="#fff5fa" />
-            <Lightformer intensity={0.9} position={[6, -1, 2]} rotation-y={-Math.PI / 2} scale={[6, 3, 1]} color="#ffffff" />
-            <Lightformer intensity={0.6} position={[0, -5, 3]} rotation-x={Math.PI / 2} scale={[8, 8, 1]} color="#fdf2f8" />
-          </Environment>
+          {/* E2: HDR de estudio real servido desde el propio origen; 512 en
+              gama media/alta, 256 como suelo absoluto en gama baja */}
+          <Environment
+            files="/env/studio.hdr"
+            resolution={lowPerf ? 256 : 512}
+            environmentIntensity={0.9}
+          />
 
-          {/* La funda flota 2 mm sobre el suelo de sombra (SS9.1) */}
           <group position={[0, 0, 0]}>
             <CaseModel device={device} material={material} colorHex={colorHex} />
             {showGrid && <Grid5 device={device} />}
-            {typeof guides?.v === 'number' && (
-              <mesh position={[guides.v - device.anchoMm / 2, 0, 0.14]}>
-                <planeGeometry args={[0.35, device.altoMm]} />
-                <meshBasicMaterial color="#E84393" transparent opacity={0.85} depthWrite={false} />
-              </mesh>
-            )}
-            {typeof guides?.h === 'number' && (
-              <mesh position={[0, device.altoMm / 2 - guides.h, 0.14]}>
-                <planeGeometry args={[device.anchoMm, 0.35]} />
-                <meshBasicMaterial color="#E84393" transparent opacity={0.85} depthWrite={false} />
-              </mesh>
-            )}
+            {guides && guides.length > 0 && <Guides device={device} guides={guides} />}
             {items.map((item) => {
               const element = catalog.get(item.elementId);
               if (!element) return null;
@@ -385,6 +641,14 @@ export function Viewer3D({
                 />
               );
             })}
+            {rotationHandleFor && (
+              <RotationHandle
+                item={rotationHandleFor.item}
+                element={rotationHandleFor.element}
+                device={device}
+                onPointerDown={onHandlePointerDown}
+              />
+            )}
             {onPlanePointerMove && (
               <mesh
                 position={[0, 0, 0.2]}
@@ -400,16 +664,18 @@ export function Viewer3D({
             )}
           </group>
 
-          {!lowPerf && (
-            <ContactShadows
-              position={[0, -device.altoMm / 2 - 2, 0]}
-              opacity={0.35}
-              blur={2.5}
-              width={device.anchoMm * 3.2}
-              height={device.altoMm * 1.4}
-              far={device.altoMm * 0.8}
-            />
-          )}
+          {/* E3: sombra de contacto elipsoidal bajo la funda; frames=1 con
+              invalidacion al cambiar variante/modelo via key */}
+          <ContactShadows
+            key={`${device.id}-${material}-${colorHex}`}
+            position={[0, -device.altoMm / 2 - 2, 0]}
+            opacity={0.35}
+            blur={2.5}
+            scale={device.altoMm * 1.6}
+            far={device.grosorMm * 8}
+            frames={1}
+            resolution={lowPerf ? 256 : 1024}
+          />
         </Suspense>
       </Canvas>
     </div>

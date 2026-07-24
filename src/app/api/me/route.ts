@@ -34,6 +34,7 @@ export async function GET() {
       emailVerificado: dbUser.emailVerificado,
       device,
       autorVisible: lastDesign?.autorVisible ?? true,
+      favoritos: Array.isArray(dbUser.favoritos) ? dbUser.favoritos : [],
     });
   } catch (e) {
     return handleApiError(e);
@@ -55,6 +56,7 @@ export async function PATCH(req: NextRequest) {
       data: {
         ...(parsed.data.nombre !== undefined ? { nombre: parsed.data.nombre } : {}),
         ...(parsed.data.deviceId !== undefined ? { deviceId: parsed.data.deviceId } : {}),
+        ...(parsed.data.favoritos !== undefined ? { favoritos: parsed.data.favoritos } : {}),
       },
     });
     if (parsed.data.autorVisible !== undefined) {

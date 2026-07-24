@@ -19,7 +19,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "postinstall": "prisma generate",
     "check:emoji": "node scripts/check-no-emoji.mjs",
-    "ci": "npm run check:emoji && npm run typecheck && npm run lint && npm run test"
+    "ci": "npm run check:emoji && npm run check:i18n && npm run typecheck && npm run lint && npm run test",
+    "check:i18n": "node scripts/check-editor-i18n.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

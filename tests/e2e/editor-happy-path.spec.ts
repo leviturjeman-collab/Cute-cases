@@ -14,6 +14,12 @@ async function totalPrice(page: Page): Promise<string> {
 }
 
 test('flujo modelo -> funda -> editor -> anadir elemento', async ({ page }) => {
+  // Ayudas de primera vez ya vistas (N16/E9): el flujo prueba el nucleo
+  await page.addInitScript(() => {
+    window.localStorage.setItem('cc.hints.tour', '1');
+    window.localStorage.setItem('cc.hints.orbit', '1');
+    window.localStorage.setItem('cc.hints.piece', '1');
+  });
   // 1. Seleccion de modelo (SS6.2): acordeon por generacion, 17 abierta
   await page.goto('/modelo');
   await expect(page.getByRole('heading', { name: 'Selecciona tu iPhone' })).toBeVisible();

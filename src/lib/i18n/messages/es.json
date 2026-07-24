@@ -42,7 +42,14 @@
       "reportar": "Reportar",
       "enviar": "Enviar",
       "publicar": "Publicar",
-      "despublicar": "Retirar de la galería"
+      "despublicar": "Retirar de la galería",
+      "limpiar": "Limpiar",
+      "siguiente": "Siguiente",
+      "entendido": "Entendido",
+      "saltar": "Saltar",
+      "bloquear": "Bloquear",
+      "desbloquear": "Desbloquear",
+      "reencuadrar": "Reencuadrar"
     },
     "precio": {
       "desde": "Desde {precio}",
@@ -186,7 +193,11 @@
       "duplicar": "Duplicar diseño",
       "cuadricula": "Cuadrícula de 5 mm",
       "ayuda": "Ayuda",
-      "eliminar": "Eliminar diseño"
+      "eliminar": "Eliminar diseño",
+      "guias": "Guías",
+      "vibracion": "Vibración",
+      "piezas": "Piezas ({n})",
+      "atajos": "Atajos"
     },
     "desglose": "Desglose del precio",
     "grados": "Grados",
@@ -204,6 +215,77 @@
       "papelera": "Papelera",
       "vistaAnterior": "Vista anterior",
       "vistaSiguiente": "Vista siguiente"
+    },
+    "aria": {
+      "categorias": "Categorías",
+      "favoritoMarcar": "Marcar como favorito",
+      "favoritoQuitar": "Quitar de favoritos",
+      "buscar": "Buscar piezas",
+      "menuPieza": "Opciones de la pieza"
+    },
+    "ayuda": {
+      "orbita": "Arrastra en una zona vacía para girar la funda.",
+      "mover": "Arrastra una pieza para moverla; el rojo indica que no cabe.",
+      "rotar": "Con una pieza seleccionada, gira con el asa, con dos dedos o con el campo de grados.",
+      "tamano": "El tamaño de las piezas es fijo: se mueven, giran y eliminan."
+    },
+    "preparandoFunda": "Preparando tu {funda}",
+    "guardadoEstado": {
+      "guardado": "Guardado",
+      "guardando": "Guardando…",
+      "sinGuardar": "Sin guardar"
+    },
+    "pieza": {
+      "eliminada": "Pieza eliminada.",
+      "letrasEliminadas": "Letras eliminadas."
+    },
+    "espacioBajo": "Queda poco espacio libre",
+    "verPiezas": "Ver piezas",
+    "buscar": {
+      "placeholder": "Buscar piezas",
+      "sinResultados": "Sin resultados para «{q}»"
+    },
+    "panel": {
+      "recientes": "Recientes",
+      "favoritos": "Favoritos",
+      "charms": "Charms",
+      "adhesivos": "Adhesivos",
+      "contador": "{categoria} · {n}"
+    },
+    "hints": {
+      "orbita": "Arrastra para girar la funda",
+      "pieza": "Tócala para moverla o girarla"
+    },
+    "tour": {
+      "paso1": "Arrastra para girar la funda.",
+      "paso2": "Toca una pieza del panel para añadirla.",
+      "paso3": "Muévela, gírala con el asa, y el precio se actualiza solo."
+    },
+    "atajos": {
+      "titulo": "Atajos de teclado",
+      "mover": "Mover 1 mm",
+      "moverRapido": "Mover 5 mm",
+      "rotar": "Rotar 1 grado",
+      "rotarInverso": "Rotar -1 grado",
+      "eliminar": "Eliminar pieza",
+      "siguientePieza": "Seleccionar la siguiente pieza",
+      "deseleccionar": "Deseleccionar",
+      "deshacer": "Deshacer",
+      "rehacer": "Rehacer"
+    },
+    "composiciones": {
+      "titulo": "Composiciones",
+      "texto": "Elige una disposición y ve tocando piezas del panel: se colocarán solas en sus anclajes.",
+      "marco": "Marco",
+      "diagonal": "Diagonal",
+      "columna": "Columna lateral",
+      "orbita": "Órbita de cámara",
+      "esquina": "Esquina inferior",
+      "activa": "Composición: {nombre} ({n} de {total})",
+      "salir": "Salir"
+    },
+    "sorpresa": {
+      "cta": "¿Sin ideas? Genera un punto de partida"
     }
   },
   "auth": {

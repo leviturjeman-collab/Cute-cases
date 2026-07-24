@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 
 export interface TabItem {
@@ -18,6 +18,14 @@ export interface TabsProps {
 /** SS4.4: subrayado 2 px pink-500, scrollables con desvanecido, teclado. */
 export function Tabs({ tabs, active, onChange, label }: TabsProps) {
   const listRef = useRef<HTMLDivElement>(null);
+
+  // Parte IV.4 (anexo v4.3): la pestana activa se auto-centra al seleccionarse
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const activeEl = list.querySelector<HTMLElement>('[aria-selected="true"]');
+    activeEl?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }, [active]);
 
   const onKeyDown = (e: KeyboardEvent) => {
     const idx = tabs.findIndex((t) => t.id === active);

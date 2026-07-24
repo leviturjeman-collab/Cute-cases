@@ -7,6 +7,7 @@ import {
   butterflyOutline,
   heartOutline,
   moonOutline,
+  recipeOutline,
   starOutline,
   waveOutline,
 } from '@/lib/silhouettes';
@@ -29,7 +30,10 @@ export interface ElementSpec {
   recipeParams?: Record<string, unknown> | null;
 }
 
-const STICKER_DEPTH = 0.15;
+// E4 (anexo v4.3): 0,25 mm — el canto fino captura una linea de luz
+const STICKER_DEPTH = 0.25;
+const STICKER_BORDER_MM = 0.8;
+const STICKER_AO_EXTRA_MM = 0.5;
 
 // ---------- utilidades ----------
 
@@ -820,9 +824,97 @@ const R: Record<string, RecipeBuilder> = {
  * buildElementMesh (SS10.1): malla procedural de un elemento. Fallback a un
  * bloque redondeado si la receta no existe (nunca geometria rota, D7).
  */
+/** Luminancia relativa aproximada de un hex (para el borde gris de E4.5). */
+function isWhiteish(hex: string | undefined): boolean {
+  if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return false;
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.86;
+}
+
+/**
+ * E4: capas bajo el sticker que lo hacen legible y "pegado" sobre cualquier
+ * fondo — borde troquelado de vinilo (0,8 mm, extruido 0,2 mm) y AO de
+ * adhesion (silueta inflada, negro 0.12, sin depthWrite).
+ */
+function stickerUnderlays(recipe: string, spec: ElementSpec): THREE.Object3D[] {
+  let outline: Vec2[];
+  try {
+    outline = recipeOutline(recipe, spec.anchoMm, spec.altoMm);
+  } catch {
+    outline = [];
+  }
+  if (outline.length < 3) {
+    const w = spec.anchoMm / 2;
+    const h = spec.altoMm / 2;
+    outline = [
+      { x: -w, y: -h },
+      { x: w, y: -h },
+      { x: w, y: h },
+      { x: -w, y: h },
+    ];
+  }
+  const inflate = (extraMm: number): THREE.Shape =>
+    shapeFrom(
+      outline.map((p) => ({
+        x: (p.x * (spec.anchoMm + 2 * extraMm)) / spec.anchoMm,
+        y: (p.y * (spec.altoMm + 2 * extraMm)) / spec.altoMm,
+      })),
+    );
+
+  // E4.5: stickers de silueta blanca usan borde gris para seguir leyendose
+  const borderColor = isWhiteish(spec.colores[0]) ? '#E9E9E9' : '#FFFFFF';
+  const borderGeo = new THREE.ExtrudeGeometry(inflate(STICKER_BORDER_MM), {
+    depth: 0.2,
+    bevelEnabled: false,
+    curveSegments: 8,
+  });
+  const borderMat = new THREE.MeshStandardMaterial({
+    color: borderColor,
+    roughness: 0.55,
+    metalness: 0,
+    // E4.3: anti z-fighting contra la superficie de la funda
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+  });
+  const border = new THREE.Mesh(borderGeo, borderMat);
+  border.position.z = -0.03;
+
+  const aoGeo = new THREE.ShapeGeometry(inflate(STICKER_BORDER_MM + STICKER_AO_EXTRA_MM));
+  const aoMat = new THREE.MeshBasicMaterial({
+    color: '#000000',
+    transparent: true,
+    opacity: 0.12,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+  });
+  const ao = new THREE.Mesh(aoGeo, aoMat);
+  ao.position.z = -0.045;
+
+  return [ao, border];
+}
+
+/** Receta plana (sticker): lleva borde de vinilo y AO de adhesion (E4). */
+function isFlatRecipe(recipe: string): boolean {
+  return recipe.includes('flat') || recipe === 'chain-flat';
+}
+
 export function buildElementMesh(recipe: string, spec: ElementSpec): THREE.Group {
   const builder = R[recipe];
-  if (builder) return builder(spec);
+  if (builder) {
+    const built = builder(spec);
+    if (isFlatRecipe(recipe)) {
+      const g = new THREE.Group();
+      for (const layer of stickerUnderlays(recipe, spec)) g.add(layer);
+      // E4.3: elevacion minima sobre la superficie
+      built.position.z += 0.05;
+      g.add(built);
+      return g;
+    }
+    return built;
+  }
   const fallback = extrudeCharm(
     shapeFrom([
       { x: -spec.anchoMm / 2, y: -spec.altoMm / 2 },

@@ -84,4 +84,6 @@ export const meUpdateSchema = z.object({
   nombre: z.string().trim().max(40).nullable().optional(),
   deviceId: z.string().nullable().optional(),
   autorVisible: z.boolean().optional(),
+  /** Favoritos del panel de elementos (N8): ids de Element. */
+  favoritos: z.array(z.string().max(64)).max(200).optional(),
 });

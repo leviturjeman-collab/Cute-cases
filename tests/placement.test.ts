@@ -51,6 +51,31 @@ describe('findFreeSpot (SS7.5)', () => {
     expect(placed.valida).toBe(true);
   });
 
+  it('E8 (anexo v4.3): franja central ocupada con hueco en cuadrante inferior', () => {
+    // Barra ancha que cruza la franja central; queda sitio real abajo.
+    const strip: ElementShape = { hitbox: rectHitbox(70, 30), anchoMm: 70, altoMm: 30 };
+    const shapes = new Map<string, ElementShape>([
+      ['strip', strip],
+      ['sq', sq10],
+    ]);
+    const others = [item('s', 'strip', device.anchoMm / 2, device.altoMm / 2)];
+    const spot = findFreeSpot('sq', sq10, others, shapes, device);
+    expect(spot).not.toBeNull();
+    const ctx = buildSceneContext(device);
+    expect(
+      esValida(
+        { instanceId: 'n', elementId: 'sq', xMm: spot!.x, yMm: spot!.y, rotationDeg: spot!.rotationDeg },
+        others,
+        shapes,
+        ctx,
+      ).valida,
+    ).toBe(true);
+    // La espiral por anillos concentricos la deja lo mas centrada posible:
+    // pegada a la franja, no en una esquina arbitraria.
+    const distToCenter = Math.hypot(spot!.x - device.anchoMm / 2, spot!.y - device.altoMm / 2);
+    expect(distToCenter).toBeLessThan(35);
+  });
+
   it('prueba rotaciones: una barra que solo cabe girada encuentra pose', () => {
     // Pasillo horizontal estrecho: bloqueadores arriba y abajo dejan una franja
     // de 12 mm de alto; una barra de 40x8 solo cabe con rotacion 0 (horizontal).

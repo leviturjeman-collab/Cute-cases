@@ -17,9 +17,11 @@ const heights: Record<SheetPosition, string> = {
   full: 'h-[70dvh]',
 };
 
+// E1 (anexo v4.3): en viewports bajos (landscape) el sheet no puede tragarse
+// el area util del visor — alturas acotadas a fracciones del viewport.
 export const SHEET_HEIGHTS_PX: Record<SheetPosition, string> = {
-  collapsed: '84px',
-  half: '264px',
+  collapsed: 'min(84px, 22dvh)',
+  half: 'min(264px, 42dvh)',
   full: '70dvh',
 };
 

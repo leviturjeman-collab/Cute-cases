@@ -51,3 +51,35 @@ cero emojis por D1 (la skill tambien los penaliza).
 placeholders): tarjetas de fundas (camara "frontal" 0/82), preestablecidos y
 hero (camara "tres-cuartos" 26/74), pasos de la home y miniaturas de la
 coleccion de temporada. Fondo transparente sobre `--bg` de la pagina.
+
+## Anexo v4.3 (auditoria del editor y funcionalidades nuevas)
+
+Implementado integramente E1-E9 y las funcionalidades N1-N8, N13-N17 y N20,
+mas la Parte IV (panel) y la Parte V (telemetria). Decisiones:
+
+- **E1**: `src/editor/camera/fit.ts` deriva la distancia del fov, el aspecto
+  y el area util; el rig fija `maxDistance = dFit` (alejar al maximo = funda
+  completa), desplaza el target al centro del area util y reencuadra animado
+  ante resize/orientacion/sheet. Matriz e2e de 13 combinaciones (3 modelos x
+  4 viewports + cambio de area util) verificada con el hook `__ccFit` (solo
+  dev), equivalente numerico a la asercion por framebuffer. Las alturas del
+  bottom sheet se acotaron a fracciones de viewport para landscape.
+- **E2**: HDR de estudio real (Poly Haven studio_small_08, CC0) servido desde
+  `/public/env/studio.hdr` (sin dependencia de red externa); 512 px de
+  resolucion (256 en gama baja), rim light 0.25 y bump de version de
+  `cc.thumbs` para regenerar miniaturas.
+- **E4**: el borde de vinilo y el AO se generan desde `recipeOutline` (la
+  misma silueta de las hitboxes) con inflado por escala por eje.
+- **N1**: el menu contextual de pieza vive en el panel anclado de la pieza
+  seleccionada (duplicar, bloquear, sustituir, centrar, eliminar) en lugar de
+  un popover junto al asa: misma funcion, un solo anclaje visual.
+- **N3**: el bloqueo es estado de sesion del editor (no se serializa al
+  diseno); las piezas bloqueadas siguen contando para colisiones y precio.
+- **N8**: favoritos en `User.favoritos` (Json) con merge por union al iniciar
+  sesion; recientes en localStorage.
+- **N9/N10**: anclajes por modelo en `src/editor/compositions.ts` (marco,
+  diagonal, columna, orbita de camara, esquina), validados uno a uno; el
+  diseno sorpresa usa esas plantillas con paleta simple por acabado.
+- **Pendiente (P2 o decision de producto)**: N11 tamano real, N12 fondos de
+  visor, N18 historial de versiones y N19 snap angular (el propio anexo lo
+  condiciona a confirmacion de producto).
