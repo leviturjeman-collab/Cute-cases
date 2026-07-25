@@ -137,6 +137,8 @@ export default function DevRendersPage() {
       // Hero (SS6.1): Silicona Soft rosa con "Coquette", tres cuartos, 1200x630
       if (hero) {
         list.push({ ...hero, path: 'hero.webp', width: 1200, height: 630 });
+        // Poster vertical del hero 3D (rediseno realista): object-contain
+        list.push({ ...hero, path: 'hero-poster.webp', width: 900, height: 1100 });
       }
 
       // Miniaturas de los disenos demo de la galeria (via /api/d/[token])

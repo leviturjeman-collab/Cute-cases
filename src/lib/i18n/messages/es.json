@@ -224,7 +224,7 @@
       "menuPieza": "Opciones de la pieza"
     },
     "ayuda": {
-      "orbita": "Arrastra en una zona vacía para girar la funda.",
+      "orbita": "Mueve el dedo por una zona vacía para girar la funda.",
       "mover": "Arrastra una pieza para moverla; el rojo indica que no cabe.",
       "rotar": "Con una pieza seleccionada, gira con el asa, con dos dedos o con el campo de grados.",
       "tamano": "El tamaño de las piezas es fijo: se mueven, giran y eliminan."
@@ -253,11 +253,11 @@
       "contador": "{categoria} · {n}"
     },
     "hints": {
-      "orbita": "Arrastra para girar la funda",
+      "orbita": "",
       "pieza": "Tócala para moverla o girarla"
     },
     "tour": {
-      "paso1": "Arrastra para girar la funda.",
+      "paso1": "Gira la funda con el dedo para verla desde cualquier lado.",
       "paso2": "Toca una pieza del panel para añadirla.",
       "paso3": "Muévela, gírala con el asa, y el precio se actualiza solo."
     },

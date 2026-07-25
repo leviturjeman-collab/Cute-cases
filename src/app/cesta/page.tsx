@@ -133,7 +133,7 @@ export default function CestaPage() {
                         alt={item.nombre}
                         fill
                         sizes="80px"
-                        className="object-cover"
+                        className="object-contain p-1"
                       />
                     ) : (
                       <div aria-hidden className="flex h-full items-center justify-center">

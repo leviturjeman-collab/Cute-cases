@@ -134,7 +134,6 @@ export function Editor({ designId }: { designId?: string }) {
   const [spaceLow, setSpaceLow] = useState(false);
   const [addFeedback, setAddFeedback] = useState<{ id: string; kind: 'pulse' | 'shake' } | null>(null);
   const [tourStep, setTourStep] = useState<number | null>(null);
-  const [orbitHint, setOrbitHint] = useState(false);
   const [pieceHint, setPieceHint] = useState(false);
   const [compositionsOpen, setCompositionsOpen] = useState(false);
   const [composition, setComposition] = useState<{
@@ -194,7 +193,6 @@ export function Editor({ designId }: { designId?: string }) {
     setRecents(readRecents());
     setFavorites(readLocalFavorites());
     if (!readHint('cc.hints.tour')) setTourStep(0);
-    else if (!readHint('cc.hints.orbit')) setOrbitHint(true);
   }, []);
 
   useEffect(() => {
@@ -385,15 +383,6 @@ export function Editor({ designId }: { designId?: string }) {
     return null;
   }, [cameraState]);
 
-  // Hint de orbita (E9.1): se desvanece al primer gesto de giro
-  useEffect(() => {
-    if (!orbitHint) return;
-    if (Math.abs(cameraState.azimuthDeg) > 8 || Math.abs(cameraState.polarDeg - 82) > 8) {
-      setOrbitHint(false);
-      writeHint('cc.hints.orbit');
-      track('hint_completado', { hint: 'orbit' });
-    }
-  }, [orbitHint, cameraState]);
 
   // ---------- validacion en vivo ----------
   const validateLive = useCallback(
@@ -1665,14 +1654,6 @@ export function Editor({ designId }: { designId?: string }) {
           </button>
         )}
 
-        {/* Hint de orbita (E9.1) */}
-        {orbitHint && !loading && (
-          <div className="pointer-events-none absolute inset-x-0 top-1/2 flex -translate-y-1/2 justify-center">
-            <p className="rounded-control bg-text/85 px-3.5 py-2 text-[13px] font-medium text-white">
-              {t('editor.hints.orbita')}
-            </p>
-          </div>
-        )}
         {/* Hint de primera pieza (E9.2) */}
         {pieceHint && (
           <div className="pointer-events-none absolute inset-x-0 top-[38%] flex justify-center">

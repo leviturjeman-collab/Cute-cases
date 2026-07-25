@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
@@ -72,6 +72,10 @@ export interface Viewer3DProps {
   /** Asa de rotacion (E5) sobre esta pieza. */
   rotationHandleFor?: { item: PlacedItem; element: CatalogElement } | null;
   onHandlePointerDown?: (instanceId: string, e: ThreeEvent<PointerEvent>) => void;
+  /** Giro suave automatico hasta la primera interaccion (hero de la home). */
+  autoRotate?: boolean;
+  /** Sin fondo propio: el canvas se integra en el fondo de la pagina. */
+  transparentBg?: boolean;
   className?: string;
 }
 
@@ -105,6 +109,7 @@ function CameraRig({
   occlusions,
   fitSignal,
   frameTarget,
+  autoRotate = false,
 }: Pick<
   Viewer3DProps,
   | 'device'
@@ -116,12 +121,23 @@ function CameraRig({
   | 'occlusions'
   | 'fitSignal'
   | 'frameTarget'
+  | 'autoRotate'
 >) {
   const controls = useRef<OrbitControlsImpl | null>(null);
   const { camera, gl, size } = useThree();
   const anim = useRef<CamAnim | null>(null);
   const booted = useRef(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [spinning, setSpinning] = useState(autoRotate);
+
+  // El giro automatico se detiene en la primera interaccion del usuario
+  useEffect(() => {
+    const c = controls.current;
+    if (!c || !autoRotate) return;
+    const stop = () => setSpinning(false);
+    c.addEventListener('start', stop);
+    return () => c.removeEventListener('start', stop);
+  }, [autoRotate]);
 
   const occTop = occlusions?.topPx ?? 0;
   const occBottom = occlusions?.bottomPx ?? 0;
@@ -295,6 +311,8 @@ function CameraRig({
       maxPolarAngle={125 * DEG}
       minAzimuthAngle={-80 * DEG}
       maxAzimuthAngle={80 * DEG}
+      autoRotate={spinning}
+      autoRotateSpeed={1.1}
       // E1.3: alejar al maximo = funda completa; no existe "mas lejos y cortada"
       minDistance={dFit * 0.45}
       maxDistance={dFit}
@@ -312,6 +330,7 @@ function CaseModel({ device, material, colorHex }: { device: DeviceSpec; materia
           radioEsquinaMm: device.radioEsquinaMm,
           grosorMm: device.grosorMm,
           cameraZone: device.cameraZone,
+          moduloForma: device.moduloForma,
         },
         material,
         colorHex,
@@ -553,6 +572,8 @@ export function Viewer3D({
   frameTarget,
   rotationHandleFor,
   onHandlePointerDown,
+  autoRotate = false,
+  transparentBg = false,
   className = '',
 }: Viewer3DProps) {
   const baseDist = device.altoMm * 1.95;
@@ -561,7 +582,11 @@ export function Viewer3D({
   return (
     <div
       className={`relative h-full w-full ${className}`}
-      style={{ background: 'radial-gradient(circle at 50% 38%, #FFFFFF 0%, #FDF7FA 78%)' }}
+      style={
+        transparentBg
+          ? undefined
+          : { background: 'radial-gradient(circle at 50% 38%, #FFFFFF 0%, #FDF7FA 78%)' }
+      }
     >
       <Canvas
         shadows={{ type: THREE.PCFSoftShadowMap }}
@@ -594,6 +619,7 @@ export function Viewer3D({
           occlusions={occlusions}
           fitSignal={fitSignal}
           frameTarget={frameTarget}
+          autoRotate={autoRotate}
         />
 
         {/* SS9.1: principal 1.2 con sombras + relleno 0.35 + rim trasera 0.25 (E2.3) */}

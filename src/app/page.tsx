@@ -3,12 +3,15 @@ import Link from 'next/link';
 import { getTranslations } from 'next-intl/server';
 import { prisma } from '@/server/db';
 import { formatCentimos } from '@/lib/pricing';
+import type { PresetData } from '@/server/presetService';
 import { PageShell } from '@/components/layout/PageShell';
 import { HeroCta } from '@/components/home/HeroCta';
+import { Hero3D, type HeroSceneData } from '@/components/home/Hero3D';
 import { ProductCard } from '@/components/ProductCard';
 import { GalleryCard, type GalleryItem } from '@/components/GalleryCard';
 import { CookieBanner } from '@/components/CookieBanner';
 import { Badge } from '@/components/ui';
+import type { CatalogElement, DeviceSpec } from '@/editor/types';
 
 // SS5.1: SSG con revalidacion.
 export const revalidate = 300;
@@ -45,9 +48,71 @@ async function getHomeData() {
   return { settings, presets, season, publishedCount, topWeek };
 }
 
+/** Escena del hero: la funda rosa con el preset Coquette, en 3D real. */
+async function getHeroScene(): Promise<HeroSceneData | null> {
+  const preset = await prisma.presetDesign.findFirst({
+    where: { publicado: true, slug: 'coquette' },
+  }) ?? await prisma.presetDesign.findFirst({ where: { publicado: true } });
+  if (!preset) return null;
+  const data = preset.designData as PresetData;
+  const caseBase = data.caseSlug
+    ? await prisma.caseBase.findUnique({ where: { slug: data.caseSlug }, include: { variantes: true } })
+    : null;
+  const variant = caseBase?.variantes.find((v) => v.id === data.caseVariantId) ?? null;
+  const device =
+    (await prisma.deviceModel.findUnique({ where: { slug: 'iphone-15-pro' } })) ??
+    (await prisma.deviceModel.findFirst({ where: { activo: true } }));
+  if (!device) return null;
+  const elementIds = [...new Set((data.elementos ?? []).map((e) => e.elementId))];
+  const elements = await prisma.element.findMany({ where: { id: { in: elementIds } } });
+  return {
+    device: {
+      id: device.id,
+      slug: device.slug,
+      nombre: device.nombre,
+      anchoMm: device.anchoMm,
+      altoMm: device.altoMm,
+      radioEsquinaMm: device.radioEsquinaMm,
+      grosorMm: device.grosorMm,
+      cameraZone: device.cameraZone as unknown as DeviceSpec['cameraZone'],
+      moduloForma: device.moduloForma,
+    },
+    material: caseBase?.material ?? 'silicona',
+    colorHex: variant?.colorHex ?? '#F4A7C3',
+    items: (data.elementos ?? []).map((e, i) => ({
+      instanceId: e.instanceId ?? `hero-${i}`,
+      elementId: e.elementId,
+      xMm: e.xMm,
+      yMm: e.yMm,
+      rotationDeg: e.rotationDeg,
+      letterChar: e.letterChar ?? undefined,
+    })),
+    elements: elements.map((e) => ({
+      id: e.id,
+      slug: e.slug,
+      nombre: e.nombre,
+      tipo: e.tipo as 'charm3d' | 'plano',
+      categoria: e.categoria,
+      precioCentimos: e.precioCentimos,
+      anchoMm: e.anchoMm,
+      altoMm: e.altoMm,
+      profundidadMm: e.profundidadMm,
+      recipe: e.recipe,
+      recipeParams: e.recipeParams as Record<string, unknown> | null,
+      assetUrl: e.assetUrl,
+      hitbox: e.hitbox as unknown as CatalogElement['hitbox'],
+      acabado: e.acabado,
+      colores: e.colores as string[],
+      letraChar: e.letraChar,
+      esNuevo: e.esNuevo,
+    })),
+  };
+}
+
 export default async function HomePage() {
   const t = await getTranslations();
   const { settings, presets, season, publishedCount, topWeek } = await getHomeData();
+  const heroScene = await getHeroScene();
 
   const galleryItems: GalleryItem[] = topWeek.map((d) => ({
     id: d.id,
@@ -67,28 +132,41 @@ export default async function HomePage() {
 
   return (
     <PageShell>
-      {/* Hero (SS6.1): el CTA es el elemento dominante de la pagina */}
-      <section className="relative -mt-14 flex max-h-[85svh] min-h-[560px] flex-col items-center justify-end overflow-hidden pb-12 pt-14">
-        <div className="absolute inset-x-0 top-0 h-[55%]">
-          <Image
-            src="/renders/hero.webp"
-            alt={t('home.heroAlt')}
-            fill
-            priority
-            sizes="100vw"
-            className="object-cover object-center"
-          />
-          <div
-            aria-hidden
-            className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-bg"
-          />
-        </div>
-        <div className="relative mt-[42svh] flex flex-col items-center gap-4 px-6 text-center">
-          <h1 className="max-w-xl font-display text-[32px] font-semibold leading-tight text-text sm:text-[40px]">
-            {settings?.heroClaim ?? t('home.claim')}
-          </h1>
-          <p className="max-w-md text-[14px] text-text-soft">{t('home.subtitulo')}</p>
-          <HeroCta />
+      {/* Hero (rediseno realista): la funda 3D REAL, girable, es el hero */}
+      <section className="relative -mt-14 overflow-hidden pt-14">
+        {/* Resplandores suaves de fondo */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -left-32 top-8 h-[420px] w-[420px] rounded-full opacity-60 blur-3xl"
+          style={{ background: 'radial-gradient(circle, #FCE7F1 0%, transparent 70%)' }}
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-40 bottom-0 h-[520px] w-[520px] rounded-full opacity-70 blur-3xl"
+          style={{ background: 'radial-gradient(circle, #F6A8CC33 0%, transparent 70%)' }}
+        />
+        <div className="mx-auto grid max-h-[92svh] max-w-5xl items-center gap-2 px-4 pb-10 lg:grid-cols-2 lg:gap-8 lg:pb-16">
+          <div className="relative order-1 h-[46svh] min-h-[320px] lg:order-2 lg:h-[560px]">
+            {heroScene ? (
+              <Hero3D scene={heroScene} />
+            ) : (
+              <Image
+                src="/renders/hero-poster.webp"
+                alt={t('home.heroAlt')}
+                fill
+                priority
+                sizes="(max-width: 1024px) 100vw, 50vw"
+                className="object-contain"
+              />
+            )}
+          </div>
+          <div className="relative order-2 flex flex-col items-center gap-4 text-center lg:order-1 lg:items-start lg:text-left">
+            <h1 className="max-w-xl font-display text-[34px] font-semibold leading-tight text-text sm:text-[44px]">
+              {settings?.heroClaim ?? t('home.claim')}
+            </h1>
+            <p className="max-w-md text-[15px] text-text-soft">{t('home.subtitulo')}</p>
+            <HeroCta />
+          </div>
         </div>
       </section>
 
@@ -164,13 +242,16 @@ export default async function HomePage() {
               key={paso.titulo}
               className="overflow-hidden rounded-card border border-border bg-surface shadow-1"
             >
-              <div className="relative aspect-[4/3] bg-surface-2">
+              <div
+                className="relative aspect-[4/3]"
+                style={{ background: 'radial-gradient(circle at 50% 40%, #FFFFFF 0%, #F6EEF2 85%)' }}
+              >
                 <Image
                   src={paso.img}
                   alt={paso.alt}
                   fill
                   sizes="(max-width: 640px) 100vw, 33vw"
-                  className="object-cover"
+                  className="object-contain p-3"
                 />
               </div>
               <div className="flex gap-3 p-4">

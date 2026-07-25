@@ -210,7 +210,7 @@ export default function MisDisenosPage() {
                           alt={d.nombre}
                           fill
                           sizes="(max-width: 640px) 50vw, 25vw"
-                          className="object-cover"
+                          className="object-contain p-1"
                         />
                       ) : (
                         <div aria-hidden className="flex h-full items-center justify-center">

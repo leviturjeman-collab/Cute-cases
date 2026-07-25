@@ -37,7 +37,10 @@ export function ProductCard({
       href={href}
       className="group block overflow-hidden rounded-card border border-border bg-surface shadow-1 transition-shadow duration-200 hover:shadow-2"
     >
-      <div className="relative aspect-[4/5] w-full overflow-hidden bg-surface-2">
+      <div
+        className="relative aspect-[4/5] w-full overflow-hidden"
+        style={{ background: 'radial-gradient(circle at 50% 40%, #FFFFFF 0%, #F6EEF2 85%)' }}
+      >
         {imageUrl ? (
           <Image
             src={imageUrl}
@@ -45,7 +48,7 @@ export function ProductCard({
             fill
             priority={priority}
             sizes="(max-width: 640px) 50vw, 25vw"
-            className="object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+            className="object-contain p-3 transition-transform duration-200 group-hover:scale-[1.04]"
           />
         ) : (
           <div aria-hidden className="flex h-full w-full items-center justify-center">

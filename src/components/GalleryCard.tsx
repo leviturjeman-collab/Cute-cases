@@ -54,16 +54,19 @@ export function GalleryCard({ item }: { item: GalleryItem }) {
   };
 
   return (
-    <div className="overflow-hidden rounded-card border border-border bg-surface shadow-1 transition-shadow duration-200 hover:shadow-2">
+    <div className="group overflow-hidden rounded-card border border-border bg-surface shadow-1 transition-shadow duration-200 hover:shadow-2">
       <Link href={`/d/${item.shareToken}`} aria-label={t('verDiseno')} className="block">
-        <div className="relative aspect-[4/5] bg-surface-2">
+        <div
+          className="relative aspect-[4/5]"
+          style={{ background: 'radial-gradient(circle at 50% 40%, #FFFFFF 0%, #F6EEF2 85%)' }}
+        >
           {item.thumbnailUrl ? (
             <Image
               src={item.thumbnailUrl}
               alt={item.nombre}
               fill
               sizes="(max-width: 640px) 50vw, 25vw"
-              className="object-cover"
+              className="object-contain p-2 transition-transform duration-200 group-hover:scale-[1.04]"
             />
           ) : (
             <div aria-hidden className="flex h-full items-center justify-center">

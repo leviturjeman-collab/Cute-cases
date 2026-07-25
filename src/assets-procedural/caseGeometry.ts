@@ -20,6 +20,47 @@ export interface CaseDeviceSpec {
   radioEsquinaMm: number;
   grosorMm?: number;
   cameraZone: Polygon;
+  /** Disposicion de lentes del modulo (SS6.2); alimenta el detalle realista. */
+  moduloForma?: string;
+}
+
+/** Lentes por forma de modulo (misma disposicion que el SVG de SS6.2). */
+function lensLayout(
+  forma: string,
+  zone: { x: number; y: number; w: number; h: number },
+): { x: number; y: number; r: number }[] {
+  const cx = zone.x + zone.w / 2;
+  const cy = zone.y + zone.h / 2;
+  const s = Math.min(zone.w, zone.h);
+  switch (forma) {
+    case 'cuadrado-triple':
+      return [
+        { x: zone.x + zone.w * 0.32, y: zone.y + zone.h * 0.28, r: s * 0.16 },
+        { x: zone.x + zone.w * 0.32, y: zone.y + zone.h * 0.72, r: s * 0.16 },
+        { x: zone.x + zone.w * 0.72, y: cy, r: s * 0.16 },
+      ];
+    case 'cuadrado-diagonal':
+      return [
+        { x: zone.x + zone.w * 0.34, y: zone.y + zone.h * 0.32, r: s * 0.17 },
+        { x: zone.x + zone.w * 0.66, y: zone.y + zone.h * 0.68, r: s * 0.17 },
+      ];
+    case 'barra-horizontal':
+      return [
+        { x: zone.x + zone.w * 0.25, y: cy, r: zone.h * 0.28 },
+        { x: cx, y: cy, r: zone.h * 0.28 },
+        { x: zone.x + zone.w * 0.75, y: cy, r: zone.h * 0.28 },
+      ];
+    case 'vertical-doble':
+    case 'vertical':
+      return [
+        { x: cx, y: zone.y + zone.h * 0.28, r: zone.w * 0.3 },
+        { x: cx, y: zone.y + zone.h * 0.72, r: zone.w * 0.3 },
+      ];
+    case 'camara-unica-vertical':
+      return [{ x: cx, y: cy, r: Math.min(zone.w, zone.h) * 0.34 }];
+    default:
+      return [{ x: cx, y: cy, r: s * 0.25 }];
+  }
 }
 
 export const PHONE_DEPTH_MM = 9;
@@ -72,13 +113,14 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
   if (device.cameraZone.length >= 3) {
     backShape.holes.push(polygonToWorldPath(device.cameraZone, device));
   }
+  // Borde exterior suave (rediseno realista): bisel amplio y esquinas finas
   const backGeo = new THREE.ExtrudeGeometry(backShape, {
     depth: grosor,
     bevelEnabled: true,
-    bevelThickness: 0.4,
-    bevelSize: 0.4,
-    bevelSegments: 2,
-    curveSegments: 14,
+    bevelThickness: 0.9,
+    bevelSize: 0.9,
+    bevelSegments: 4,
+    curveSegments: 24,
   });
   backGeo.translate(0, 0, -grosor);
   const back = new THREE.Mesh(backGeo, mat);
@@ -122,6 +164,51 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
     );
     well.position.z = 0.02;
     group.add(well);
+
+    // Lentes reales del modulo (rediseno realista): anillo metalico +
+    // cristal oscuro con brillo del HDR, dispuestas segun moduloForma
+    const xs = device.cameraZone.map((p) => p.x);
+    const ys = device.cameraZone.map((p) => p.y);
+    const zone = {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      w: Math.max(...xs) - Math.min(...xs),
+      h: Math.max(...ys) - Math.min(...ys),
+    };
+    const ringMat = new THREE.MeshPhysicalMaterial({
+      color: '#3A3A3F',
+      metalness: 0.9,
+      roughness: 0.28,
+    });
+    const glassMat = new THREE.MeshPhysicalMaterial({
+      color: '#07070C',
+      roughness: 0.05,
+      clearcoat: 1,
+      clearcoatRoughness: 0.04,
+      envMapIntensity: 1.4,
+    });
+    const pupilMat = new THREE.MeshPhysicalMaterial({
+      color: '#1B2340',
+      roughness: 0.1,
+      clearcoat: 1,
+    });
+    for (const lens of lensLayout(device.moduloForma ?? '', zone)) {
+      const [lx, ly] = mmToWorld(lens.x, lens.y, device);
+      const ring = new THREE.Mesh(
+        new THREE.CylinderGeometry(lens.r, lens.r * 1.06, 1.5, 28, 1, true),
+        ringMat,
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(lx, ly, 0.75);
+      ring.castShadow = true;
+      group.add(ring);
+      const glass = new THREE.Mesh(new THREE.CircleGeometry(lens.r * 0.96, 28), glassMat);
+      glass.position.set(lx, ly, 1.5);
+      group.add(glass);
+      const pupil = new THREE.Mesh(new THREE.CircleGeometry(lens.r * 0.45, 22), pupilMat);
+      pupil.position.set(lx, ly, 1.52);
+      group.add(pupil);
+    }
   }
 
   // 3) Paredes laterales: cascaron hasta la profundidad del telefono
