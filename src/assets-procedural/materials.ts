@@ -28,9 +28,10 @@ export function caseMaterial(material: string, colorHex: string): THREE.MeshPhys
     case 'rigida':
       return new THREE.MeshPhysicalMaterial({
         color,
-        roughness: 0.35,
-        clearcoat: 0.6,
-        clearcoatRoughness: 0.3,
+        roughness: 0.3,
+        clearcoat: 0.8,
+        clearcoatRoughness: 0.22,
+        envMapIntensity: 1.05,
       });
     case 'rigida-perlada':
       return new THREE.MeshPhysicalMaterial({
@@ -45,10 +46,13 @@ export function caseMaterial(material: string, colorHex: string): THREE.MeshPhys
     default:
       return new THREE.MeshPhysicalMaterial({
         color,
-        roughness: 0.55,
-        sheen: 0.4,
-        sheenColor: lighten(colorHex, 0.2),
-        envMapIntensity: 0.8,
+        roughness: 0.46,
+        sheen: 0.65,
+        sheenRoughness: 0.6,
+        sheenColor: lighten(colorHex, 0.25),
+        clearcoat: 0.06,
+        clearcoatRoughness: 0.5,
+        envMapIntensity: 1.0,
       });
   }
 }

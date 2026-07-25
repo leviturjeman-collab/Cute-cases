@@ -78,7 +78,7 @@ async function getHeroScene(): Promise<HeroSceneData | null> {
       moduloForma: device.moduloForma,
     },
     material: caseBase?.material ?? 'silicona',
-    colorHex: variant?.colorHex ?? '#F4A7C3',
+    colorHex: variant?.colorHex ?? '#F3D3DB',
     items: (data.elementos ?? []).map((e, i) => ({
       instanceId: e.instanceId ?? `hero-${i}`,
       elementId: e.elementId,
@@ -282,7 +282,7 @@ export default async function HomePage() {
               {t('home.explorarGaleria')}
             </Link>
           </div>
-          <div className="grid grid-cols-2 gap-4 sm:max-w-2xl">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             {galleryItems.map((item) => (
               <GalleryCard key={item.id} item={item} />
             ))}

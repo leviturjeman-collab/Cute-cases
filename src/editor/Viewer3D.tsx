@@ -623,13 +623,14 @@ export function Viewer3D({
         />
 
         {/* SS9.1: principal 1.2 con sombras + relleno 0.35 + rim trasera 0.25 (E2.3) */}
+        <hemisphereLight args={['#FFFFFF', '#EADDE4', 0.4]} />
         <directionalLight
           position={[
             Math.cos(35 * DEG) * Math.sin(30 * DEG) * 200,
             Math.sin(35 * DEG) * 200,
             Math.cos(35 * DEG) * Math.cos(30 * DEG) * 200,
           ]}
-          intensity={1.2}
+          intensity={0.95}
           castShadow
           shadow-mapSize={lowPerf ? [1024, 1024] : [2048, 2048]}
           shadow-camera-left={-device.altoMm}

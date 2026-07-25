@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { caseMaterial, phoneBodyMaterial } from './materials';
-import { inflateConvexPolygon } from '@/lib/collision/geometry';
 import type { Polygon } from '@/lib/collision';
 
 /**
@@ -35,31 +34,52 @@ function lensLayout(
   switch (forma) {
     case 'cuadrado-triple':
       return [
-        { x: zone.x + zone.w * 0.32, y: zone.y + zone.h * 0.28, r: s * 0.16 },
-        { x: zone.x + zone.w * 0.32, y: zone.y + zone.h * 0.72, r: s * 0.16 },
-        { x: zone.x + zone.w * 0.72, y: cy, r: s * 0.16 },
+        { x: zone.x + zone.w * 0.3, y: zone.y + zone.h * 0.27, r: s * 0.19 },
+        { x: zone.x + zone.w * 0.3, y: zone.y + zone.h * 0.73, r: s * 0.19 },
+        { x: zone.x + zone.w * 0.73, y: cy, r: s * 0.19 },
       ];
     case 'cuadrado-diagonal':
       return [
-        { x: zone.x + zone.w * 0.34, y: zone.y + zone.h * 0.32, r: s * 0.17 },
-        { x: zone.x + zone.w * 0.66, y: zone.y + zone.h * 0.68, r: s * 0.17 },
+        { x: zone.x + zone.w * 0.32, y: zone.y + zone.h * 0.3, r: s * 0.24 },
+        { x: zone.x + zone.w * 0.68, y: zone.y + zone.h * 0.7, r: s * 0.24 },
       ];
     case 'barra-horizontal':
       return [
-        { x: zone.x + zone.w * 0.25, y: cy, r: zone.h * 0.28 },
-        { x: cx, y: cy, r: zone.h * 0.28 },
-        { x: zone.x + zone.w * 0.75, y: cy, r: zone.h * 0.28 },
+        { x: zone.x + zone.w * 0.22, y: cy, r: zone.h * 0.32 },
+        { x: cx, y: cy, r: zone.h * 0.32 },
+        { x: zone.x + zone.w * 0.78, y: cy, r: zone.h * 0.32 },
       ];
     case 'vertical-doble':
     case 'vertical':
       return [
-        { x: cx, y: zone.y + zone.h * 0.28, r: zone.w * 0.3 },
-        { x: cx, y: zone.y + zone.h * 0.72, r: zone.w * 0.3 },
+        { x: cx, y: zone.y + zone.h * 0.27, r: zone.w * 0.33 },
+        { x: cx, y: zone.y + zone.h * 0.73, r: zone.w * 0.33 },
       ];
     case 'camara-unica-vertical':
-      return [{ x: cx, y: cy, r: Math.min(zone.w, zone.h) * 0.34 }];
+      return [{ x: cx, y: cy, r: Math.min(zone.w, zone.h) * 0.36 }];
     default:
-      return [{ x: cx, y: cy, r: s * 0.25 }];
+      return [{ x: cx, y: cy, r: s * 0.27 }];
+  }
+}
+
+/** Punto libre del modulo para el flash (opuesto al grupo de lentes). */
+function flashSpot(
+  forma: string,
+  zone: { x: number; y: number; w: number; h: number },
+): { x: number; y: number } {
+  switch (forma) {
+    case 'cuadrado-triple':
+      return { x: zone.x + zone.w * 0.73, y: zone.y + zone.h * 0.22 };
+    case 'cuadrado-diagonal':
+      return { x: zone.x + zone.w * 0.72, y: zone.y + zone.h * 0.26 };
+    case 'barra-horizontal':
+      return { x: zone.x + zone.w * 0.5, y: zone.y + zone.h * 0.18 };
+    case 'vertical-doble':
+    case 'vertical':
+    case 'camara-unica-vertical':
+      return { x: zone.x + zone.w * 0.8, y: zone.y + zone.h * 0.2 };
+    default:
+      return { x: zone.x + zone.w * 0.78, y: zone.y + zone.h * 0.22 };
   }
 }
 
@@ -85,13 +105,19 @@ function roundedRectShape(w: number, h: number, r: number): THREE.Shape {
   return s;
 }
 
-function polygonToWorldPath(poly: Polygon, device: CaseDeviceSpec): THREE.Path {
+/** Agujero redondeado centrado en (cx, cy): mismo radio que la plataforma. */
+function roundedRectPath(w: number, h: number, r: number, cx: number, cy: number): THREE.Path {
   const path = new THREE.Path();
-  poly.forEach((p, i) => {
-    const [x, y] = mmToWorld(p.x, p.y, device);
-    if (i === 0) path.moveTo(x, y);
-    else path.lineTo(x, y);
-  });
+  const rr = Math.min(r, w / 2, h / 2);
+  path.moveTo(cx - w / 2 + rr, cy - h / 2);
+  path.lineTo(cx + w / 2 - rr, cy - h / 2);
+  path.quadraticCurveTo(cx + w / 2, cy - h / 2, cx + w / 2, cy - h / 2 + rr);
+  path.lineTo(cx + w / 2, cy + h / 2 - rr);
+  path.quadraticCurveTo(cx + w / 2, cy + h / 2, cx + w / 2 - rr, cy + h / 2);
+  path.lineTo(cx - w / 2 + rr, cy + h / 2);
+  path.quadraticCurveTo(cx - w / 2, cy + h / 2, cx - w / 2, cy + h / 2 - rr);
+  path.lineTo(cx - w / 2, cy - h / 2 + rr);
+  path.quadraticCurveTo(cx - w / 2, cy - h / 2, cx - w / 2 + rr, cy - h / 2);
   path.closePath();
   return path;
 }
@@ -108,10 +134,22 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
   const h = device.altoMm;
   const r = device.radioEsquinaMm;
 
-  // 1) Placa trasera con agujero de camara, extruida hacia -z
+  // 1) Placa trasera con agujero de camara REDONDEADO (queda siempre
+  //    cubierto por la plataforma; sin muescas en las esquinas)
   const backShape = roundedRectShape(w, h, r);
   if (device.cameraZone.length >= 3) {
-    backShape.holes.push(polygonToWorldPath(device.cameraZone, device));
+    const hx = device.cameraZone.map((p) => p.x);
+    const hy = device.cameraZone.map((p) => p.y);
+    const hw = Math.max(...hx) - Math.min(...hx);
+    const hh = Math.max(...hy) - Math.min(...hy);
+    const [hcx, hcy] = mmToWorld(
+      (Math.min(...hx) + Math.max(...hx)) / 2,
+      (Math.min(...hy) + Math.max(...hy)) / 2,
+      device,
+    );
+    backShape.holes.push(
+      roundedRectPath(hw, hh, Math.min(hw, hh) * 0.3, hcx, hcy),
+    );
   }
   // Borde exterior suave (rediseno realista): bisel amplio y esquinas finas
   const backGeo = new THREE.ExtrudeGeometry(backShape, {
@@ -128,57 +166,67 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
   back.receiveShadow = true;
   group.add(back);
 
-  // 2) Inserto de camara elevado 1 mm con borde biselado (SS9.4)
+  // 2) Recorte de camara como en la funda de silicona real: la apertura
+  //    deja ver el modulo OSCURO del iPhone hundido bajo la superficie,
+  //    con sus lentes; nada de plataforma del color de la funda.
   if (device.cameraZone.length >= 3) {
-    const inflated = inflateConvexPolygon(device.cameraZone, 0.8);
-    const insertShape = new THREE.Shape();
-    inflated.forEach((p, i) => {
-      const [x, y] = mmToWorld(p.x, p.y, device);
-      if (i === 0) insertShape.moveTo(x, y);
-      else insertShape.lineTo(x, y);
+    const xs = device.cameraZone.map((p) => p.x);
+    const ys = device.cameraZone.map((p) => p.y);
+    const zw = Math.max(...xs) - Math.min(...xs);
+    const zh = Math.max(...ys) - Math.min(...ys);
+    const zcx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const zcy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const [icx, icy] = mmToWorld(zcx, zcy, device);
+
+    // Aro en relieve del color de la funda alrededor del recorte (el labio
+    // enrollado caracteristico de la funda de silicona real)
+    const lipRingShape = roundedRectShape(zw + 3.2, zh + 3.2, Math.min(zw, zh) * 0.3 + 1.6);
+    lipRingShape.holes.push(
+      roundedRectPath(zw - 1.2, zh - 1.2, Math.min(zw, zh) * 0.28, 0, 0),
+    );
+    const lipRingGeo = new THREE.ExtrudeGeometry(lipRingShape, {
+      depth: 0.9,
+      bevelEnabled: true,
+      bevelThickness: 0.55,
+      bevelSize: 0.55,
+      bevelSegments: 4,
+      curveSegments: 20,
     });
-    insertShape.closePath();
-    const insertGeo = new THREE.ExtrudeGeometry(insertShape, {
-      depth: 1,
+    lipRingGeo.translate(icx, icy, -0.3);
+    const lipRing = new THREE.Mesh(lipRingGeo, mat.clone());
+    lipRing.castShadow = true;
+    group.add(lipRing);
+
+    // Modulo del telefono visto por el recorte: cristal claro satinado
+    const moduleShape = roundedRectShape(zw - 0.6, zh - 0.6, Math.min(zw, zh) * 0.28);
+    const moduleGeo = new THREE.ExtrudeGeometry(moduleShape, {
+      depth: grosor + 0.6,
       bevelEnabled: true,
       bevelThickness: 0.3,
       bevelSize: 0.3,
       bevelSegments: 2,
+      curveSegments: 16,
     });
-    insertGeo.translate(0, 0, -0.15);
-    const insert = new THREE.Mesh(insertGeo, mat.clone());
-    insert.castShadow = true;
-    group.add(insert);
-
-    // Fondo oscuro del hueco (lente)
-    const wellShape = new THREE.Shape();
-    device.cameraZone.forEach((p, i) => {
-      const [x, y] = mmToWorld(p.x, p.y, device);
-      if (i === 0) wellShape.moveTo(x, y);
-      else wellShape.lineTo(x, y);
+    moduleGeo.translate(icx, icy, -grosor - 0.8);
+    const moduleMat = new THREE.MeshPhysicalMaterial({
+      color: '#AEC3D6',
+      roughness: 0.25,
+      clearcoat: 0.7,
+      clearcoatRoughness: 0.18,
+      envMapIntensity: 1.1,
     });
-    wellShape.closePath();
-    const well = new THREE.Mesh(
-      new THREE.ShapeGeometry(wellShape),
-      new THREE.MeshStandardMaterial({ color: '#141216', roughness: 0.6 }),
-    );
-    well.position.z = 0.02;
-    group.add(well);
+    const modulePlate = new THREE.Mesh(moduleGeo, moduleMat);
+    modulePlate.receiveShadow = true;
+    group.add(modulePlate);
 
-    // Lentes reales del modulo (rediseno realista): anillo metalico +
-    // cristal oscuro con brillo del HDR, dispuestas segun moduloForma
-    const xs = device.cameraZone.map((p) => p.x);
-    const ys = device.cameraZone.map((p) => p.y);
-    const zone = {
-      x: Math.min(...xs),
-      y: Math.min(...ys),
-      w: Math.max(...xs) - Math.min(...xs),
-      h: Math.max(...ys) - Math.min(...ys),
-    };
+    // Lentes sobre el modulo oscuro: anillo metalico + cristal con brillo
+    const zone = { x: Math.min(...xs), y: Math.min(...ys), w: zw, h: zh };
+    // Cara superior real de la placa del modulo: -grosor-0.8 + (grosor+0.6) + bisel 0.3
+    const moduleTop = 0.1;
     const ringMat = new THREE.MeshPhysicalMaterial({
-      color: '#3A3A3F',
-      metalness: 0.9,
-      roughness: 0.28,
+      color: '#93A9BF',
+      metalness: 0.85,
+      roughness: 0.25,
     });
     const glassMat = new THREE.MeshPhysicalMaterial({
       color: '#07070C',
@@ -192,23 +240,117 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
       roughness: 0.1,
       clearcoat: 1,
     });
+    // Sombra interior del recorte: el modulo se lee hundido, como en la foto
+    const innerShadowShape = roundedRectShape(zw - 0.6, zh - 0.6, Math.min(zw, zh) * 0.28);
+    innerShadowShape.holes.push(
+      roundedRectPath(zw - 3.2, zh - 3.2, Math.min(zw, zh) * 0.24, 0, 0),
+    );
+    const innerShadow = new THREE.Mesh(
+      new THREE.ShapeGeometry(innerShadowShape),
+      new THREE.MeshBasicMaterial({
+        color: '#000000',
+        transparent: true,
+        opacity: 0.16,
+        depthWrite: false,
+      }),
+    );
+    innerShadow.position.set(icx, icy, moduleTop + 0.03);
+    group.add(innerShadow);
+
+    const barrelMat = new THREE.MeshPhysicalMaterial({
+      color: '#10131A',
+      roughness: 0.25,
+      clearcoat: 0.9,
+      clearcoatRoughness: 0.15,
+      envMapIntensity: 1.2,
+    });
     for (const lens of lensLayout(device.moduloForma ?? '', zone)) {
       const [lx, ly] = mmToWorld(lens.x, lens.y, device);
-      const ring = new THREE.Mesh(
-        new THREE.CylinderGeometry(lens.r, lens.r * 1.06, 1.5, 28, 1, true),
+      // Aro metalico exterior FINO (el borde plateado del iPhone)
+      const rim = new THREE.Mesh(
+        new THREE.CylinderGeometry(lens.r * 1.04, lens.r * 1.08, 1.7, 48, 1, true),
         ringMat,
       );
-      ring.rotation.x = Math.PI / 2;
-      ring.position.set(lx, ly, 0.75);
-      ring.castShadow = true;
-      group.add(ring);
-      const glass = new THREE.Mesh(new THREE.CircleGeometry(lens.r * 0.96, 28), glassMat);
-      glass.position.set(lx, ly, 1.5);
+      rim.rotation.x = Math.PI / 2;
+      rim.position.set(lx, ly, moduleTop + 0.85);
+      rim.castShadow = true;
+      group.add(rim);
+      const rimTop = new THREE.Mesh(
+        new THREE.RingGeometry(lens.r * 0.94, lens.r * 1.06, 48),
+        ringMat.clone(),
+      );
+      rimTop.position.set(lx, ly, moduleTop + 1.7);
+      group.add(rimTop);
+      // Barril negro brillante de la lente
+      const barrelTop = new THREE.Mesh(
+        new THREE.RingGeometry(lens.r * 0.6, lens.r * 0.95, 48),
+        barrelMat,
+      );
+      barrelTop.position.set(lx, ly, moduleTop + 1.69);
+      group.add(barrelTop);
+      // Cristal grande con anillo concentrico y destello
+      const glass = new THREE.Mesh(new THREE.CircleGeometry(lens.r * 0.61, 48), glassMat);
+      glass.position.set(lx, ly, moduleTop + 1.68);
       group.add(glass);
-      const pupil = new THREE.Mesh(new THREE.CircleGeometry(lens.r * 0.45, 22), pupilMat);
-      pupil.position.set(lx, ly, 1.52);
+      const concentric = new THREE.Mesh(
+        new THREE.RingGeometry(lens.r * 0.4, lens.r * 0.45, 40),
+        new THREE.MeshBasicMaterial({ color: '#2A3550', transparent: true, opacity: 0.9 }),
+      );
+      concentric.position.set(lx, ly, moduleTop + 1.7);
+      group.add(concentric);
+      const pupil = new THREE.Mesh(new THREE.CircleGeometry(lens.r * 0.26, 28), pupilMat);
+      pupil.position.set(lx, ly, moduleTop + 1.71);
       group.add(pupil);
+      const glint = new THREE.Mesh(
+        new THREE.CircleGeometry(lens.r * 0.07, 12),
+        new THREE.MeshBasicMaterial({ color: '#CFE0F2', transparent: true, opacity: 0.9 }),
+      );
+      glint.position.set(lx - lens.r * 0.24, ly + lens.r * 0.27, moduleTop + 1.72);
+      group.add(glint);
     }
+
+    // Flash y microfono sobre el modulo, como en el telefono real
+    const flash = flashSpot(device.moduloForma ?? '', zone);
+    const [fx, fy] = mmToWorld(flash.x, flash.y, device);
+    const flashMat = new THREE.MeshPhysicalMaterial({
+      color: '#F5F1E6',
+      emissive: '#FFF7DC',
+      emissiveIntensity: 0.25,
+      roughness: 0.3,
+      clearcoat: 0.8,
+    });
+    const flashDot = new THREE.Mesh(
+      new THREE.CircleGeometry(Math.min(zw, zh) * 0.075, 20),
+      flashMat,
+    );
+    flashDot.position.set(fx, fy, moduleTop + 0.06);
+    group.add(flashDot);
+    const micDot = new THREE.Mesh(
+      new THREE.CircleGeometry(0.7, 12),
+      new THREE.MeshStandardMaterial({ color: '#3C4048', roughness: 0.5 }),
+    );
+    micDot.position.set(fx, fy - Math.min(zw, zh) * 0.16, moduleTop + 0.06);
+    group.add(micDot);
+  }
+
+  // 2b) Botones laterales en el color de la funda (volumen + accion a la
+  //     izquierda, encendido a la derecha): el detalle que la hace real
+  const buttonZ = -grosor - PHONE_DEPTH_MM * 0.42;
+  const buttonSpecs: { side: -1 | 1; yMm: number; lenMm: number }[] = [
+    { side: -1, yMm: h * 0.245, lenMm: 6 },
+    { side: -1, yMm: h * 0.335, lenMm: 10 },
+    { side: -1, yMm: h * 0.415, lenMm: 10 },
+    { side: 1, yMm: h * 0.33, lenMm: 14 },
+  ];
+  for (const b of buttonSpecs) {
+    const capsule = new THREE.Mesh(
+      new THREE.CapsuleGeometry(1.05, b.lenMm - 2.1, 4, 10),
+      mat.clone(),
+    );
+    const [, wy] = mmToWorld(0, b.yMm, device);
+    capsule.position.set(b.side * (w / 2 + 0.55), wy, buttonZ);
+    capsule.castShadow = true;
+    group.add(capsule);
   }
 
   // 3) Paredes laterales: cascaron hasta la profundidad del telefono
@@ -216,10 +358,14 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
   wallShape.holes.push(
     roundedRectShape(w - 2 * grosor, h - 2 * grosor, Math.max(1, r - grosor)) as unknown as THREE.Path,
   );
+  // Paredes con canto exterior redondeado: adios al perfil de caja
   const wallGeo = new THREE.ExtrudeGeometry(wallShape, {
     depth: PHONE_DEPTH_MM,
-    bevelEnabled: false,
-    curveSegments: 14,
+    bevelEnabled: true,
+    bevelThickness: 0.7,
+    bevelSize: 0.7,
+    bevelSegments: 3,
+    curveSegments: 24,
   });
   wallGeo.translate(0, 0, -PHONE_DEPTH_MM - grosor + 0.01);
   const wall = new THREE.Mesh(wallGeo, mat.clone());
@@ -232,7 +378,14 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
   lipShape.holes.push(
     roundedRectShape(w - 2 * 1.6, h - 2 * 1.6, Math.max(1, r - 1.6)) as unknown as THREE.Path,
   );
-  const lipGeo = new THREE.ExtrudeGeometry(lipShape, { depth: 1, bevelEnabled: false, curveSegments: 14 });
+  const lipGeo = new THREE.ExtrudeGeometry(lipShape, {
+    depth: 1,
+    bevelEnabled: true,
+    bevelThickness: 0.4,
+    bevelSize: 0.4,
+    bevelSegments: 2,
+    curveSegments: 24,
+  });
   lipGeo.translate(0, 0, -PHONE_DEPTH_MM - grosor - 1);
   const lip = new THREE.Mesh(lipGeo, mat.clone());
   group.add(lip);

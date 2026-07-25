@@ -205,12 +205,17 @@ export default function DevRendersPage() {
         list.push({ ...hero, path: 'pasos/piezas.webp', width: 1200, height: 900 });
       }
 
-      setJobs(list);
+      // ?only=<subcadena> regenera solo los trabajos cuya ruta la contenga
+      const only = new URLSearchParams(window.location.search).get('only');
+      setJobs(only ? list.filter((j) => j.path.includes(only)) : list);
 
       // Miniaturas de temporada para la banda de la home (SS6.1.3)
       const elementsRes = (await (await fetch('/api/elements')).json()) as {
         porCategoria: Record<string, (CatalogElement & { id: string })[]>;
       };
+      if (only && !'elementos/'.includes(only) && !only.startsWith('elementos')) {
+        return;
+      }
       for (const el of elementsRes.porCategoria['temporada'] ?? []) {
         const url = await getElementThumbnail(el.id, el.recipe ?? 'fallback', {
           anchoMm: el.anchoMm,

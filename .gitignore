@@ -30,3 +30,5 @@ prisma/*.db
 coverage/
 playwright-report/
 test-results/
+.gen-renders.mjs
+.shot-case.mjs
