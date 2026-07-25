@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { caseMaterial, phoneBodyMaterial } from './materials';
+import { moduleLayout } from './moduleLayout';
 import type { Polygon } from '@/lib/collision';
 
 /**
@@ -21,66 +22,6 @@ export interface CaseDeviceSpec {
   cameraZone: Polygon;
   /** Disposicion de lentes del modulo (SS6.2); alimenta el detalle realista. */
   moduloForma?: string;
-}
-
-/** Lentes por forma de modulo (misma disposicion que el SVG de SS6.2). */
-function lensLayout(
-  forma: string,
-  zone: { x: number; y: number; w: number; h: number },
-): { x: number; y: number; r: number }[] {
-  const cx = zone.x + zone.w / 2;
-  const cy = zone.y + zone.h / 2;
-  const s = Math.min(zone.w, zone.h);
-  switch (forma) {
-    case 'cuadrado-triple':
-      return [
-        { x: zone.x + zone.w * 0.3, y: zone.y + zone.h * 0.27, r: s * 0.19 },
-        { x: zone.x + zone.w * 0.3, y: zone.y + zone.h * 0.73, r: s * 0.19 },
-        { x: zone.x + zone.w * 0.73, y: cy, r: s * 0.19 },
-      ];
-    case 'cuadrado-diagonal':
-      return [
-        { x: zone.x + zone.w * 0.32, y: zone.y + zone.h * 0.3, r: s * 0.24 },
-        { x: zone.x + zone.w * 0.68, y: zone.y + zone.h * 0.7, r: s * 0.24 },
-      ];
-    case 'barra-horizontal':
-      return [
-        { x: zone.x + zone.w * 0.22, y: cy, r: zone.h * 0.32 },
-        { x: cx, y: cy, r: zone.h * 0.32 },
-        { x: zone.x + zone.w * 0.78, y: cy, r: zone.h * 0.32 },
-      ];
-    case 'vertical-doble':
-    case 'vertical':
-      return [
-        { x: cx, y: zone.y + zone.h * 0.27, r: zone.w * 0.33 },
-        { x: cx, y: zone.y + zone.h * 0.73, r: zone.w * 0.33 },
-      ];
-    case 'camara-unica-vertical':
-      return [{ x: cx, y: cy, r: Math.min(zone.w, zone.h) * 0.36 }];
-    default:
-      return [{ x: cx, y: cy, r: s * 0.27 }];
-  }
-}
-
-/** Punto libre del modulo para el flash (opuesto al grupo de lentes). */
-function flashSpot(
-  forma: string,
-  zone: { x: number; y: number; w: number; h: number },
-): { x: number; y: number } {
-  switch (forma) {
-    case 'cuadrado-triple':
-      return { x: zone.x + zone.w * 0.73, y: zone.y + zone.h * 0.22 };
-    case 'cuadrado-diagonal':
-      return { x: zone.x + zone.w * 0.72, y: zone.y + zone.h * 0.26 };
-    case 'barra-horizontal':
-      return { x: zone.x + zone.w * 0.5, y: zone.y + zone.h * 0.18 };
-    case 'vertical-doble':
-    case 'vertical':
-    case 'camara-unica-vertical':
-      return { x: zone.x + zone.w * 0.8, y: zone.y + zone.h * 0.2 };
-    default:
-      return { x: zone.x + zone.w * 0.78, y: zone.y + zone.h * 0.22 };
-  }
 }
 
 export const PHONE_DEPTH_MM = 9;
@@ -267,73 +208,106 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
       clearcoatRoughness: 0.15,
       envMapIntensity: 1.2,
     });
-    for (const lens of lensLayout(device.moduloForma ?? '', zone)) {
+    const layout = moduleLayout(device.moduloForma ?? '', zone);
+    for (const lens of layout.lenses) {
       const [lx, ly] = mmToWorld(lens.x, lens.y, device);
-      // Aro metalico exterior FINO (el borde plateado del iPhone)
+      // Estructura de la lente real (de fuera adentro): aro metalico que
+      // ocupa el 20% del radio, barril negro brillante, cristal de zafiro
+      // con dos anillos de elementos y pupila oscura
       const rim = new THREE.Mesh(
-        new THREE.CylinderGeometry(lens.r * 1.04, lens.r * 1.08, 1.7, 48, 1, true),
+        new THREE.CylinderGeometry(lens.r, lens.r * 1.03, 1.8, 48, 1, true),
         ringMat,
       );
       rim.rotation.x = Math.PI / 2;
-      rim.position.set(lx, ly, moduleTop + 0.85);
+      rim.position.set(lx, ly, moduleTop + 0.9);
       rim.castShadow = true;
       group.add(rim);
       const rimTop = new THREE.Mesh(
-        new THREE.RingGeometry(lens.r * 0.94, lens.r * 1.06, 48),
+        new THREE.RingGeometry(lens.r * 0.8, lens.r, 48),
         ringMat.clone(),
       );
-      rimTop.position.set(lx, ly, moduleTop + 1.7);
+      rimTop.position.set(lx, ly, moduleTop + 1.8);
       group.add(rimTop);
-      // Barril negro brillante de la lente
       const barrelTop = new THREE.Mesh(
-        new THREE.RingGeometry(lens.r * 0.6, lens.r * 0.95, 48),
+        new THREE.RingGeometry(lens.r * 0.56, lens.r * 0.8, 48),
         barrelMat,
       );
-      barrelTop.position.set(lx, ly, moduleTop + 1.69);
+      barrelTop.position.set(lx, ly, moduleTop + 1.79);
       group.add(barrelTop);
-      // Cristal grande con anillo concentrico y destello
-      const glass = new THREE.Mesh(new THREE.CircleGeometry(lens.r * 0.61, 48), glassMat);
-      glass.position.set(lx, ly, moduleTop + 1.68);
+      const glass = new THREE.Mesh(new THREE.CircleGeometry(lens.r * 0.57, 48), glassMat);
+      glass.position.set(lx, ly, moduleTop + 1.77);
       group.add(glass);
-      const concentric = new THREE.Mesh(
-        new THREE.RingGeometry(lens.r * 0.4, lens.r * 0.45, 40),
-        new THREE.MeshBasicMaterial({ color: '#2A3550', transparent: true, opacity: 0.9 }),
+      const concentricOuter = new THREE.Mesh(
+        new THREE.RingGeometry(lens.r * 0.42, lens.r * 0.46, 40),
+        new THREE.MeshBasicMaterial({ color: '#2A3550', transparent: true, opacity: 0.7 }),
       );
-      concentric.position.set(lx, ly, moduleTop + 1.7);
-      group.add(concentric);
-      const pupil = new THREE.Mesh(new THREE.CircleGeometry(lens.r * 0.26, 28), pupilMat);
-      pupil.position.set(lx, ly, moduleTop + 1.71);
+      concentricOuter.position.set(lx, ly, moduleTop + 1.78);
+      group.add(concentricOuter);
+      const concentricInner = new THREE.Mesh(
+        new THREE.RingGeometry(lens.r * 0.3, lens.r * 0.335, 40),
+        new THREE.MeshBasicMaterial({ color: '#232C46', transparent: true, opacity: 0.55 }),
+      );
+      concentricInner.position.set(lx, ly, moduleTop + 1.78);
+      group.add(concentricInner);
+      const pupil = new THREE.Mesh(new THREE.CircleGeometry(lens.r * 0.22, 28), pupilMat);
+      pupil.position.set(lx, ly, moduleTop + 1.79);
       group.add(pupil);
       const glint = new THREE.Mesh(
-        new THREE.CircleGeometry(lens.r * 0.07, 12),
+        new THREE.CircleGeometry(lens.r * 0.06, 12),
         new THREE.MeshBasicMaterial({ color: '#CFE0F2', transparent: true, opacity: 0.9 }),
       );
-      glint.position.set(lx - lens.r * 0.24, ly + lens.r * 0.27, moduleTop + 1.72);
+      glint.position.set(lx - lens.r * 0.2, ly + lens.r * 0.24, moduleTop + 1.8);
       group.add(glint);
     }
 
-    // Flash y microfono sobre el modulo, como en el telefono real
-    const flash = flashSpot(device.moduloForma ?? '', zone);
-    const [fx, fy] = mmToWorld(flash.x, flash.y, device);
-    const flashMat = new THREE.MeshPhysicalMaterial({
-      color: '#F5F1E6',
-      emissive: '#FFF7DC',
-      emissiveIntensity: 0.25,
-      roughness: 0.3,
-      clearcoat: 0.8,
-    });
-    const flashDot = new THREE.Mesh(
-      new THREE.CircleGeometry(Math.min(zw, zh) * 0.075, 20),
-      flashMat,
+    // Flash True Tone: aro perimetral tenue con la ventana calida dentro
+    const [fx, fy] = mmToWorld(layout.flash.x, layout.flash.y, device);
+    const flashRing = new THREE.Mesh(
+      new THREE.RingGeometry(layout.flash.r * 0.72, layout.flash.r, 32),
+      new THREE.MeshPhysicalMaterial({ color: '#E9E4D8', roughness: 0.35, clearcoat: 0.5 }),
     );
-    flashDot.position.set(fx, fy, moduleTop + 0.06);
-    group.add(flashDot);
-    const micDot = new THREE.Mesh(
-      new THREE.CircleGeometry(0.7, 12),
-      new THREE.MeshStandardMaterial({ color: '#3C4048', roughness: 0.5 }),
+    flashRing.position.set(fx, fy, moduleTop + 0.06);
+    group.add(flashRing);
+    const flashInner = new THREE.Mesh(
+      new THREE.CircleGeometry(layout.flash.r * 0.72, 32),
+      new THREE.MeshPhysicalMaterial({
+        color: '#F6EED6',
+        emissive: '#FFEFC2',
+        emissiveIntensity: 0.16,
+        roughness: 0.3,
+        clearcoat: 0.8,
+      }),
     );
-    micDot.position.set(fx, fy - Math.min(zw, zh) * 0.16, moduleTop + 0.06);
-    group.add(micDot);
+    flashInner.position.set(fx, fy, moduleTop + 0.07);
+    group.add(flashInner);
+
+    // LiDAR de los Pro: circulo oscuro brillante sin aro
+    if (layout.lidar) {
+      const [dx, dy] = mmToWorld(layout.lidar.x, layout.lidar.y, device);
+      const lidarDot = new THREE.Mesh(
+        new THREE.CircleGeometry(layout.lidar.r, 28),
+        new THREE.MeshPhysicalMaterial({
+          color: '#171B26',
+          roughness: 0.15,
+          clearcoat: 1,
+          clearcoatRoughness: 0.1,
+          envMapIntensity: 1.3,
+        }),
+      );
+      lidarDot.position.set(dx, dy, moduleTop + 0.06);
+      group.add(lidarDot);
+    }
+
+    // Microfono: punto pequeno mate
+    if (layout.mic) {
+      const [mx, my] = mmToWorld(layout.mic.x, layout.mic.y, device);
+      const micDot = new THREE.Mesh(
+        new THREE.CircleGeometry(layout.mic.r, 12),
+        new THREE.MeshStandardMaterial({ color: '#3C4048', roughness: 0.5 }),
+      );
+      micDot.position.set(mx, my, moduleTop + 0.06);
+      group.add(micDot);
+    }
   }
 
   // 2b) Botones laterales en el color de la funda (volumen + accion a la

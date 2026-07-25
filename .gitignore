@@ -32,3 +32,4 @@ playwright-report/
 test-results/
 .gen-renders.mjs
 .shot-case.mjs
+.shot-camaras.mjs

@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { moduleLayout } from '@/assets-procedural/moduleLayout';
 
 interface Point {
   x: number;
@@ -42,7 +43,21 @@ export function CameraModuleIcon({
     w: (Math.max(...xs) - Math.min(...xs)) * scale,
     h: (Math.max(...ys) - Math.min(...ys)) * scale,
   };
-  const lenses = lensLayout(moduloForma, zone);
+  // Misma disposicion calibrada que la funda 3D; el layout trabaja en mm,
+  // asi que se calcula sin escalar y se escala al dibujar
+  const zoneMm = {
+    x: Math.min(...xs),
+    y: Math.min(...ys),
+    w: Math.max(...xs) - Math.min(...xs),
+    h: Math.max(...ys) - Math.min(...ys),
+  };
+  const layout = moduleLayout(moduloForma, zoneMm);
+  const lenses = layout.lenses.map((l) => ({ x: l.x * scale, y: l.y * scale, r: l.r * scale }));
+  const flash = {
+    x: layout.flash.x * scale,
+    y: layout.flash.y * scale,
+    r: layout.flash.r * scale,
+  };
   const moduleRadius = Math.min(zone.w, zone.h) * (moduloForma.startsWith('cuadrado') ? 0.28 : 0.5);
 
   return (
@@ -84,44 +99,7 @@ export function CameraModuleIcon({
           strokeWidth={1.2}
         />
       ))}
+      <circle cx={flash.x} cy={flash.y} r={Math.max(1.2, flash.r)} fill="var(--pink-300)" />
     </svg>
   );
-}
-
-function lensLayout(
-  forma: string,
-  zone: { x: number; y: number; w: number; h: number },
-): { x: number; y: number; r: number }[] {
-  const cx = zone.x + zone.w / 2;
-  const cy = zone.y + zone.h / 2;
-  const s = Math.min(zone.w, zone.h);
-  switch (forma) {
-    case 'cuadrado-triple':
-      return [
-        { x: zone.x + zone.w * 0.32, y: zone.y + zone.h * 0.28, r: s * 0.16 },
-        { x: zone.x + zone.w * 0.32, y: zone.y + zone.h * 0.72, r: s * 0.16 },
-        { x: zone.x + zone.w * 0.72, y: cy, r: s * 0.16 },
-      ];
-    case 'cuadrado-diagonal':
-      return [
-        { x: zone.x + zone.w * 0.34, y: zone.y + zone.h * 0.32, r: s * 0.17 },
-        { x: zone.x + zone.w * 0.66, y: zone.y + zone.h * 0.68, r: s * 0.17 },
-      ];
-    case 'barra-horizontal':
-      return [
-        { x: zone.x + zone.w * 0.25, y: cy, r: zone.h * 0.28 },
-        { x: cx, y: cy, r: zone.h * 0.28 },
-        { x: zone.x + zone.w * 0.75, y: cy, r: zone.h * 0.28 },
-      ];
-    case 'vertical-doble':
-    case 'vertical':
-      return [
-        { x: cx, y: zone.y + zone.h * 0.28, r: zone.w * 0.3 },
-        { x: cx, y: zone.y + zone.h * 0.72, r: zone.w * 0.3 },
-      ];
-    case 'camara-unica-vertical':
-      return [{ x: cx, y: cy, r: Math.min(zone.w, zone.h) * 0.34 }];
-    default:
-      return [{ x: cx, y: cy, r: s * 0.25 }];
-  }
 }
