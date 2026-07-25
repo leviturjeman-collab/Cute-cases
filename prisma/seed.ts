@@ -79,7 +79,7 @@ const CASES: CaseSeed[] = [
     slug: 'silicona-soft', nombre: 'Silicona Soft', material: 'silicona', destacada: true,
     descripcion: 'Tacto suave y agarre firme para el dia a dia. Protege sin sumar peso y las piezas se asientan sobre ella como si siempre hubieran estado ahi.',
     variantes: [
-      { colorNombre: 'Rosa', colorHex: '#F3D3DB', precioCentimos: 1995 },
+      { colorNombre: 'Rosa', colorHex: '#F1C6D2', precioCentimos: 1995 },
       { colorNombre: 'Lavanda', colorHex: '#C3B1E1', precioCentimos: 1995 },
       { colorNombre: 'Crema', colorHex: '#F5EBDD', precioCentimos: 1995 },
       { colorNombre: 'Negro', colorHex: '#1E1E1E', precioCentimos: 1995 },

@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { ContactShadows, Environment, OrbitControls } from '@react-three/drei';
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { buildCaseGeometry, buildElementMesh, mmToWorld } from '@/assets-procedural';
 import { computeFitDistance, computeFitTargetY, computePieceFitDistance } from './camera/fit';
@@ -19,6 +20,36 @@ import type { PlacedItem } from '@/lib/collision';
  */
 
 const DEG = Math.PI / 180;
+
+// Uniforms de rectAreaLight (softbox): se inicializan una sola vez
+let rectAreaReady = false;
+function ensureRectAreaUniforms() {
+  if (!rectAreaReady) {
+    RectAreaLightUniformsLib.init();
+    rectAreaReady = true;
+  }
+}
+
+/** Softbox de estudio: luz de area orientada al origen, con caida suave. */
+function Softbox({
+  position,
+  size,
+  intensity,
+  color = '#FFFFFF',
+}: {
+  position: [number, number, number];
+  size: [number, number];
+  intensity: number;
+  color?: string;
+}) {
+  const ref = useRef<THREE.RectAreaLight>(null);
+  useEffect(() => {
+    ref.current?.lookAt(0, 0, 0);
+  }, []);
+  return (
+    <rectAreaLight ref={ref} args={[color, intensity, size[0], size[1]]} position={position} />
+  );
+}
 
 export interface ItemVisualState {
   selected?: boolean;
@@ -603,8 +634,9 @@ export function Viewer3D({
           ],
         }}
         onCreated={({ gl }) => {
+          ensureRectAreaUniforms();
           gl.toneMapping = THREE.ACESFilmicToneMapping;
-          gl.toneMappingExposure = 1.05;
+          gl.toneMappingExposure = 0.98;
           gl.outputColorSpace = THREE.SRGBColorSpace;
         }}
         onPointerMissed={onBackgroundTap}
@@ -622,15 +654,20 @@ export function Viewer3D({
           autoRotate={autoRotate}
         />
 
-        {/* SS9.1: principal 1.2 con sombras + relleno 0.35 + rim trasera 0.25 (E2.3) */}
-        <hemisphereLight args={['#FFFFFF', '#EADDE4', 0.4]} />
+        {/* Estudio fotografico (SS9.1/E2.3): softbox principal arriba a la
+            izquierda (degradado suave sobre la trasera plana), relleno calido
+            a la derecha, hemisferica tenue y una direccional baja solo para
+            proyectar la sombra que las luces de area no pueden dar */}
+        <hemisphereLight args={['#FFFFFF', '#EADDE4', 0.18]} />
+        <Softbox position={[-160, 190, 210]} size={[340, 340]} intensity={1.6} />
+        <Softbox position={[210, 30, 170]} size={[260, 260]} intensity={0.5} color="#FFF4EE" />
         <directionalLight
           position={[
             Math.cos(35 * DEG) * Math.sin(30 * DEG) * 200,
             Math.sin(35 * DEG) * 200,
             Math.cos(35 * DEG) * Math.cos(30 * DEG) * 200,
           ]}
-          intensity={0.95}
+          intensity={0.4}
           castShadow
           shadow-mapSize={lowPerf ? [1024, 1024] : [2048, 2048]}
           shadow-camera-left={-device.altoMm}
@@ -638,8 +675,8 @@ export function Viewer3D({
           shadow-camera-top={device.altoMm}
           shadow-camera-bottom={-device.altoMm}
         />
-        <directionalLight position={[-120, -40, -160]} intensity={0.35} />
-        <directionalLight position={[40, 120, -220]} intensity={0.25} />
+        <directionalLight position={[-120, -40, -160]} intensity={0.3} />
+        <directionalLight position={[40, 120, -220]} intensity={0.22} />
 
         <Suspense fallback={null}>
           {/* E2: HDR de estudio real servido desde el propio origen; 512 en
@@ -647,7 +684,7 @@ export function Viewer3D({
           <Environment
             files="/env/studio.hdr"
             resolution={lowPerf ? 256 : 512}
-            environmentIntensity={0.9}
+            environmentIntensity={0.7}
           />
 
           <group position={[0, 0, 0]}>

@@ -155,10 +155,10 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
   const backGeo = new THREE.ExtrudeGeometry(backShape, {
     depth: grosor,
     bevelEnabled: true,
-    bevelThickness: 0.9,
-    bevelSize: 0.9,
-    bevelSegments: 4,
-    curveSegments: 24,
+    bevelThickness: 1.1,
+    bevelSize: 1.1,
+    bevelSegments: 7,
+    curveSegments: 48,
   });
   backGeo.translate(0, 0, -grosor);
   const back = new THREE.Mesh(backGeo, mat);
@@ -189,8 +189,8 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
       bevelEnabled: true,
       bevelThickness: 0.55,
       bevelSize: 0.55,
-      bevelSegments: 4,
-      curveSegments: 20,
+      bevelSegments: 6,
+      curveSegments: 40,
     });
     lipRingGeo.translate(icx, icy, -0.3);
     const lipRing = new THREE.Mesh(lipRingGeo, mat.clone());
@@ -233,7 +233,10 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
       roughness: 0.05,
       clearcoat: 1,
       clearcoatRoughness: 0.04,
-      envMapIntensity: 1.4,
+      envMapIntensity: 1.7,
+      iridescence: 0.55,
+      iridescenceIOR: 1.3,
+      iridescenceThicknessRange: [120, 480],
     });
     const pupilMat = new THREE.MeshPhysicalMaterial({
       color: '#1B2340',
@@ -250,7 +253,7 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
       new THREE.MeshBasicMaterial({
         color: '#000000',
         transparent: true,
-        opacity: 0.16,
+        opacity: 0.26,
         depthWrite: false,
       }),
     );
@@ -362,10 +365,10 @@ export function buildCaseGeometry(device: CaseDeviceSpec, material: string, colo
   const wallGeo = new THREE.ExtrudeGeometry(wallShape, {
     depth: PHONE_DEPTH_MM,
     bevelEnabled: true,
-    bevelThickness: 0.7,
-    bevelSize: 0.7,
-    bevelSegments: 3,
-    curveSegments: 24,
+    bevelThickness: 0.85,
+    bevelSize: 0.85,
+    bevelSegments: 6,
+    curveSegments: 48,
   });
   wallGeo.translate(0, 0, -PHONE_DEPTH_MM - grosor + 0.01);
   const wall = new THREE.Mesh(wallGeo, mat.clone());

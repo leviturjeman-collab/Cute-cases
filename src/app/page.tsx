@@ -78,7 +78,7 @@ async function getHeroScene(): Promise<HeroSceneData | null> {
       moduloForma: device.moduloForma,
     },
     material: caseBase?.material ?? 'silicona',
-    colorHex: variant?.colorHex ?? '#F3D3DB',
+    colorHex: variant?.colorHex ?? '#F1C6D2',
     items: (data.elementos ?? []).map((e, i) => ({
       instanceId: e.instanceId ?? `hero-${i}`,
       elementId: e.elementId,

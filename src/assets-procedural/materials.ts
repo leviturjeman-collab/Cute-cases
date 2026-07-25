@@ -10,6 +10,38 @@ function lighten(hex: string, amount: number): THREE.Color {
   return c.lerp(new THREE.Color('#ffffff'), amount);
 }
 
+// Micro-grano de la silicona: ruido suave compartido como mapa de rugosidad
+// y de relieve. Se genera una sola vez; en SSR no hay document y se omite.
+let siliconeGrain: THREE.CanvasTexture | null = null;
+function siliconeGrainMap(): THREE.CanvasTexture | null {
+  if (typeof document === 'undefined') return null;
+  if (siliconeGrain) return siliconeGrain;
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const img = ctx.createImageData(size, size);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 208 + Math.floor(Math.random() * 34);
+    img.data[i] = v;
+    img.data[i + 1] = v;
+    img.data[i + 2] = v;
+    img.data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  // Suavizado leve para que el grano no parezca ruido digital
+  ctx.filter = 'blur(1.2px)';
+  ctx.drawImage(canvas, 0, 0);
+  siliconeGrain = new THREE.CanvasTexture(canvas);
+  siliconeGrain.wrapS = THREE.RepeatWrapping;
+  siliconeGrain.wrapT = THREE.RepeatWrapping;
+  // Las UV de la extrusion van en mm: un ciclo cada 20mm deja grano ~0.08mm
+  siliconeGrain.repeat.set(0.05, 0.05);
+  return siliconeGrain;
+}
+
 /** SS9.2 — material de la funda segun su tipo. */
 export function caseMaterial(material: string, colorHex: string): THREE.MeshPhysicalMaterial {
   const color = new THREE.Color(colorHex);
@@ -43,17 +75,22 @@ export function caseMaterial(material: string, colorHex: string): THREE.MeshPhys
         iridescenceIOR: 1.3,
       });
     case 'silicona':
-    default:
+    default: {
+      const grain = siliconeGrainMap();
       return new THREE.MeshPhysicalMaterial({
         color,
-        roughness: 0.46,
-        sheen: 0.65,
-        sheenRoughness: 0.6,
-        sheenColor: lighten(colorHex, 0.25),
-        clearcoat: 0.06,
-        clearcoatRoughness: 0.5,
+        roughness: 0.5,
+        roughnessMap: grain ?? undefined,
+        bumpMap: grain ?? undefined,
+        bumpScale: 0.12,
+        sheen: 0.75,
+        sheenRoughness: 0.55,
+        sheenColor: lighten(colorHex, 0.15),
+        clearcoat: 0.1,
+        clearcoatRoughness: 0.55,
         envMapIntensity: 1.0,
       });
+    }
   }
 }
 
