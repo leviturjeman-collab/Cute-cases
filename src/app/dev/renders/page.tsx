@@ -79,6 +79,37 @@ export default function DevRendersPage() {
 
       const list: RenderJob[] = [];
 
+      // set=fundas-modelos: matriz funda x dispositivo para que cada tarjeta
+      // del catalogo muestre el modulo de camara del modelo seleccionado
+      const set = new URLSearchParams(window.location.search).get('set');
+      if (set === 'fundas-modelos') {
+        for (const dev of allDevices) {
+          const casesDev = (await (await fetch(`/api/cases?deviceId=${dev.id}`)).json()) as {
+            fundas: CaseApi[];
+          };
+          for (const funda of casesDev.fundas) {
+            const variant =
+              funda.variantes.find((v) => v.disponible && /rosa/i.test(v.colorNombre)) ??
+              funda.variantes.find((v) => v.disponible) ??
+              funda.variantes[0]!;
+            list.push({
+              path: `cases/${funda.slug}/${dev.slug}.webp`,
+              width: 900,
+              height: 900,
+              device: dev,
+              material: funda.material,
+              colorHex: variant.colorHex,
+              items: [],
+              catalog: new Map(),
+              camera: 'frontal',
+            });
+          }
+        }
+        const onlyM = new URLSearchParams(window.location.search).get('only');
+        setJobs(onlyM ? list.filter((j) => j.path.includes(onlyM)) : list);
+        return;
+      }
+
       // Tarjetas de fundas (frontal 1200x1200)
       for (const funda of casesRes.fundas) {
         const variant =

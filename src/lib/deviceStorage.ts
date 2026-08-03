@@ -7,6 +7,8 @@ const KEY = 'cc.device';
 export interface RememberedDevice {
   id: string;
   nombre: string;
+  /** Slug del modelo: permite elegir arte de tarjeta por modelo exacto. */
+  slug?: string;
 }
 
 export function getRememberedDevice(): RememberedDevice | null {

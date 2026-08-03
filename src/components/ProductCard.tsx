@@ -1,12 +1,16 @@
+'use client';
+
 import Link from 'next/link';
 import Image from 'next/image';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 export interface ProductCardProps {
   href: string;
   nombre: string;
   imageUrl: string | null;
   imageAlt: string;
+  /** Imagen alternativa si la principal no existe (p. ej. arte generico). */
+  fallbackImageUrl?: string | null;
   /** Linea secundaria (material, modelo...). */
   subtitle?: string;
   /** Precio ya formateado ("Desde 19,95 EUR" o cerrado). */
@@ -26,12 +30,16 @@ export function ProductCard({
   nombre,
   imageUrl,
   imageAlt,
+  fallbackImageUrl,
   subtitle,
   priceLabel,
   badge,
   footer,
   priority = false,
 }: ProductCardProps) {
+  const [src, setSrc] = useState(imageUrl);
+  useEffect(() => setSrc(imageUrl), [imageUrl]);
+
   return (
     <Link
       href={href}
@@ -41,14 +49,17 @@ export function ProductCard({
         className="relative aspect-[4/5] w-full overflow-hidden"
         style={{ background: 'radial-gradient(circle at 50% 40%, #FFFFFF 0%, #F6EEF2 85%)' }}
       >
-        {imageUrl ? (
+        {src ? (
           <Image
-            src={imageUrl}
+            src={src}
             alt={imageAlt}
             fill
             priority={priority}
             sizes="(max-width: 640px) 50vw, 25vw"
             className="object-contain p-3 transition-transform duration-200 group-hover:scale-[1.04]"
+            onError={() => {
+              if (fallbackImageUrl && src !== fallbackImageUrl) setSrc(fallbackImageUrl);
+            }}
           />
         ) : (
           <div aria-hidden className="flex h-full w-full items-center justify-center">

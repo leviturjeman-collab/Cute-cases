@@ -53,8 +53,8 @@ export function ModeloClient({ devices }: { devices: DeviceRow[] }) {
   const effectiveOpen = query.trim() ? null : (openGen ?? generations[0]?.[0] ?? null);
 
   const confirmSelect = (device: DeviceRow) => {
-    rememberDevice({ id: device.id, nombre: device.nombre });
-    setRemembered({ id: device.id, nombre: device.nombre });
+    rememberDevice({ id: device.id, nombre: device.nombre, slug: device.slug });
+    setRemembered({ id: device.id, nombre: device.nombre, slug: device.slug });
     track('modelo_seleccionado', { modelo: device.slug });
     if (status === 'authenticated') {
       void api('/api/me', { method: 'PATCH', body: JSON.stringify({ deviceId: device.id }) }).catch(

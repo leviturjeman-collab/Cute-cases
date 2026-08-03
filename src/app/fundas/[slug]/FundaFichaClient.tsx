@@ -67,7 +67,11 @@ export function FundaFichaClient({ funda }: { funda: FundaDetalle }) {
     if (!compatible) {
       // Sin modelo valido: elegirlo primero conservando el destino (SS6.4)
       if (funda.compatibles.length === 1) {
-        rememberDevice({ id: funda.compatibles[0]!.id, nombre: funda.compatibles[0]!.nombre });
+        rememberDevice({
+          id: funda.compatibles[0]!.id,
+          nombre: funda.compatibles[0]!.nombre,
+          slug: funda.compatibles[0]!.slug,
+        });
       } else {
         router.push(`/modelo?volver=${encodeURIComponent(`/fundas/${funda.slug}`)}`);
         return;

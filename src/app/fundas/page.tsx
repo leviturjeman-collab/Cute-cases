@@ -35,13 +35,29 @@ function FundasContent() {
   const t = useTranslations();
   const router = useRouter();
   const params = useSearchParams();
-  const [device, setDevice] = useState<{ id: string; nombre: string } | null | undefined>(undefined);
+  const [device, setDevice] = useState<
+    { id: string; nombre: string; slug?: string } | null | undefined
+  >(undefined);
 
   useEffect(() => {
     const remembered = getRememberedDevice();
     setDevice(remembered);
     if (!remembered) router.replace('/modelo?volver=%2Ffundas');
   }, [router]);
+
+  // Slug del modelo para el arte de tarjeta exacto: selecciones antiguas
+  // (sin slug guardado) lo resuelven contra /api/devices
+  const { data: devicesData } = useQuery({
+    queryKey: ['devices'],
+    queryFn: () =>
+      api<{ generaciones: { modelos: { id: string; slug: string }[] }[] }>('/api/devices'),
+    enabled: !!device && !device.slug,
+    staleTime: Infinity,
+  });
+  const deviceSlug =
+    device?.slug ??
+    devicesData?.generaciones.flatMap((g) => g.modelos).find((m) => m.id === device?.id)?.slug ??
+    null;
 
   const materialFilter = params.get('material');
   const colorFilter = params.get('color');
@@ -173,8 +189,13 @@ function FundasContent() {
                 key={f.id}
                 href={`/fundas/${f.slug}`}
                 nombre={f.nombre}
-                imageUrl={f.fotos[0] ?? null}
-                imageAlt={f.nombre}
+                // La tarjeta muestra la funda con el modulo de camara del
+                // modelo seleccionado; el arte generico queda de reserva
+                imageUrl={
+                  deviceSlug ? `/renders/cases/${f.slug}/${deviceSlug}.webp` : f.fotos[0] ?? null
+                }
+                fallbackImageUrl={f.fotos[0] ?? null}
+                imageAlt={`${f.nombre} - ${device.nombre}`}
                 subtitle={t(`fundas.materiales.${f.material}`)}
                 priceLabel={t('common.precio.desde', { precio: formatCentimos(desde) })}
                 footer={

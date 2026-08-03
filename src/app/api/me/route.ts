@@ -18,7 +18,7 @@ export async function GET() {
     const device = dbUser.deviceId
       ? await prisma.deviceModel.findUnique({
           where: { id: dbUser.deviceId },
-          select: { id: true, nombre: true },
+          select: { id: true, nombre: true, slug: true },
         })
       : null;
     // autorVisible por defecto: el del ultimo diseno o true
